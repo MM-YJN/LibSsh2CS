@@ -1,0 +1,32 @@
+{
+  "kex": "diffie-hellman-group14-sha256",
+  "hostkey": "ssh-ed25519",
+  "cipher_cs": "aes256-ctr",
+  "cipher_sc": "aes256-ctr",
+  "mac_cs": "hmac-sha2-256",
+  "mac_sc": "hmac-sha2-256",
+  "compression": "none",
+  "hash": "SHA-256",
+  "e_field_encoding": "mpint",
+  "session_id_equals_h": true,
+  "hash_length": 32,
+  "field_lengths": {
+    "VC": 26,
+    "VS": 41,
+    "IC": 196,
+    "IS": 787,
+    "KS": 51,
+    "E": 256,
+    "F": 256,
+    "K": 256,
+    "H": 32
+  },
+  "derived_keys": {
+    "A": "9ee11e8db6be1d891d99a478f32854eb",
+    "B": "2b13eeef6379fee596af835395d36e0a",
+    "C": "cb0f3936d1daadd44ff58ef36564038e635a987d6e4b9d30f322c510ea0e644c",
+    "D": "550520ef572d8d1010c81d295ac03b3f7ac227039bfa03d58aaae202ac9c1f10",
+    "E": "b131ba09a540721e5a4b133e921c088ac569131e33c07c32e84ba3196a6ca60f",
+    "F": "9e0213c6345599c3ea46a150f31290372465f5f342643eb79e7ed9cbdf9adc48"
+  }
+}

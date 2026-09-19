@@ -1,0 +1,98 @@
+{
+  "mode": "cleartext",
+  "cipher": "(default)",
+  "mac": "(default)",
+  "kex": "(default)",
+  "hostkey": "(default)",
+  "negotiated": {
+    "kex": "curve25519-sha256",
+    "crypt": "chacha20-poly1305@openssh.com",
+    "mac": "hmac-sha2-256",
+    "hostkey": "ssh-ed25519"
+  },
+  "oracle": "outbound \u2014 reader uses local keys A=IV, C=enc, E=MAC, seqno=0",
+  "reader_keys": {
+    "iv": "A",
+    "enc": "C",
+    "mac": "E"
+  },
+  "packets": [
+    {
+      "index": 0,
+      "direction": "out",
+      "type_byte": 20,
+      "plaintext_len": 1630,
+      "ciphertext_len": 1640
+    },
+    {
+      "index": 1,
+      "direction": "out",
+      "type_byte": 30,
+      "plaintext_len": 37,
+      "ciphertext_len": 48
+    },
+    {
+      "index": 2,
+      "direction": "out",
+      "type_byte": 21,
+      "plaintext_len": 1,
+      "ciphertext_len": 16
+    },
+    {
+      "index": 3,
+      "direction": "out",
+      "type_byte": 5,
+      "plaintext_len": 17,
+      "ciphertext_len": 44
+    },
+    {
+      "index": 4,
+      "direction": "out",
+      "type_byte": 50,
+      "plaintext_len": 112,
+      "ciphertext_len": 140
+    },
+    {
+      "index": 5,
+      "direction": "out",
+      "type_byte": 50,
+      "plaintext_len": 199,
+      "ciphertext_len": 228
+    },
+    {
+      "index": 6,
+      "direction": "out",
+      "type_byte": 90,
+      "plaintext_len": 24,
+      "ciphertext_len": 52
+    },
+    {
+      "index": 7,
+      "direction": "out",
+      "type_byte": 98,
+      "plaintext_len": 49,
+      "ciphertext_len": 76
+    },
+    {
+      "index": 8,
+      "direction": "out",
+      "type_byte": 96,
+      "plaintext_len": 5,
+      "ciphertext_len": 36
+    },
+    {
+      "index": 9,
+      "direction": "out",
+      "type_byte": 97,
+      "plaintext_len": 5,
+      "ciphertext_len": 36
+    },
+    {
+      "index": 10,
+      "direction": "out",
+      "type_byte": 1,
+      "plaintext_len": 25,
+      "ciphertext_len": 52
+    }
+  ]
+}

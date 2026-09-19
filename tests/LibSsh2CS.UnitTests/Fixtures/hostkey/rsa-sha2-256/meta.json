@@ -1,0 +1,17 @@
+{
+  "hostkey": "rsa-sha2-256",
+  "kex": "curve25519-sha256",
+  "hash": "SHA-256",
+  "field_lengths": {
+    "VC": 26,
+    "VS": 41,
+    "IC": 185,
+    "IS": 788,
+    "KS": 535,
+    "E": 32,
+    "F": 32,
+    "K": 32,
+    "H": 32,
+    "SIG": 532
+  }
+}

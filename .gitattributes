@@ -1,0 +1,28 @@
+# Declare files that will always have LF line endings on checkout
+* text=auto
+
+# Force bash scripts to always use lf line endings so that if a repo is accessed
+# in Unix via a file share from Windows, the scripts will work.
+*.sh text eol=lf
+*.crt text eol=lf
+*.txt text eol=lf
+
+# Likewise, force cmd and batch scripts to always use crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+*.cs text eol=crlf diff=csharp
+*.razor text eol=crlf
+
+# Test fixtures: golden reference files must use LF for byte-exact cross-platform
+# parity. Source-tree rules above (*.cs eol=crlf) do not apply to fixture content.
+# Binary fixtures (NUL bytes — pack/idx/zip/packet-capture/key-blob formats) are
+# marked binary so the blanket LF rule can't corrupt them.
+tests/**/Fixtures/** text eol=lf
+tests/**/Fixtures/**/*.bin binary
+tests/**/Fixtures/**/*.ct binary
+tests/**/Fixtures/**/*.idx binary
+tests/**/Fixtures/**/*.pack binary
+tests/**/Fixtures/**/*.pt binary
+tests/**/Fixtures/**/*.zip binary
+tests/**/Fixtures/**/index/* binary

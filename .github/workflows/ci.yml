@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Restore packages
+        run: dotnet restore LibSsh2CS.slnx --locked-mode
+
+      - name: Verify formatting
+        run: dotnet format LibSsh2CS.slnx --verify-no-changes --no-restore
+
+      - name: Build Release
+        run: dotnet build LibSsh2CS.slnx -c Release --no-restore -p:ContinuousIntegrationBuild=true
+
+      - name: Test coverage checker
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+
+      - name: Verify integration prerequisites
+        run: |
+          test "$(docker info --format '{{.OSType}}')" = linux
+          command -v ssh-agent
+          command -v ssh-add
+
+      - name: Run tests with coverage
+        id: tests
+        run: |
+          dotnet test --solution LibSsh2CS.slnx -c Release --no-build \
+            --results-directory ./artifacts/coverage -- \
+            --coverlet --coverlet-output-format cobertura \
+            --coverlet-include '[LibSsh2CS]*' \
+            --report-xunit-trx --fail-skips on
+
+      - name: Generate combined coverage report
+        id: coverage
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        run: |
+          # Both suites must contribute; never silently report partial coverage.
+          test "$(find artifacts/coverage -maxdepth 1 -name '*.cobertura.*.xml' | wc -l)" -eq 2
+          dotnet tool restore
+          dotnet reportgenerator \
+            '-reports:./artifacts/coverage/*.cobertura.*.xml' \
+            '-targetdir:./artifacts/coverage/report' \
+            '-assemblyfilters:+LibSsh2CS' \
+            '-reporttypes:Html;MarkdownSummary;Cobertura'
+
+      - name: Enforce coverage thresholds
+        if: ${{ !cancelled() && steps.coverage.outcome == 'success' }}
+        run: |
+          python3 .github/scripts/check_coverage.py artifacts/coverage/report \
+            --line-threshold 90 --branch-threshold 80
+
+      - name: Upload coverage and test results
+        if: ${{ !cancelled() && hashFiles('artifacts/coverage/**') != '' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-and-test-results
+          path: artifacts/coverage/
+          retention-days: 14
+          if-no-files-found: error

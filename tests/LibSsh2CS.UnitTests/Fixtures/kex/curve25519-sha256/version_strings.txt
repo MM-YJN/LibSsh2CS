@@ -1,0 +1,2 @@
+VC=SSH-2.0-libssh2_1.11.1_DEV
+VS=SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.18

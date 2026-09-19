@@ -1,0 +1,32 @@
+{
+  "kex": "ecdh-sha2-nistp384",
+  "hostkey": "ssh-ed25519",
+  "cipher_cs": "aes256-ctr",
+  "cipher_sc": "aes256-ctr",
+  "mac_cs": "hmac-sha2-256",
+  "mac_sc": "hmac-sha2-256",
+  "compression": "none",
+  "hash": "SHA-384",
+  "e_field_encoding": "string",
+  "session_id_equals_h": true,
+  "hash_length": 48,
+  "field_lengths": {
+    "VC": 26,
+    "VS": 41,
+    "IC": 185,
+    "IS": 787,
+    "KS": 51,
+    "E": 97,
+    "F": 97,
+    "K": 48,
+    "H": 48
+  },
+  "derived_keys": {
+    "A": "5b2b0c845ecbdd17d3c99371f1816d76",
+    "B": "be07948238c3d22a225a7fb4f5937192",
+    "C": "63bd73e260c44fe0946313252c78a6af5c70f0f6941c8c982afdfcb6b9c1f434",
+    "D": "1495d3c127229c070fb9d068d738e5501a8223a0596317d904e9c5afa5954294",
+    "E": "cd6b01c778f17d3ed34f9f7fcf51f05e0ce6f2264a730a6713fc091a6641c6b8",
+    "F": "c0130d2d7dcb81228cd2eebf99546e9d1a8a3855a21243a84bc0e1bd6f56f78d"
+  }
+}

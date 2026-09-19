@@ -1,0 +1,17 @@
+{
+  "hostkey": "ssh-ed25519",
+  "kex": "curve25519-sha256",
+  "hash": "SHA-256",
+  "field_lengths": {
+    "VC": 26,
+    "VS": 41,
+    "IC": 184,
+    "IS": 787,
+    "KS": 51,
+    "E": 32,
+    "F": 32,
+    "K": 32,
+    "H": 32,
+    "SIG": 83
+  }
+}

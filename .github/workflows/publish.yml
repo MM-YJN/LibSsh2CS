@@ -1,0 +1,187 @@
+name: Publish NuGet
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-nuget
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    outputs:
+      artifact-id: ${{ steps.packages.outputs.artifact-id }}
+    steps:
+      - name: Check out release commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          global-json-file: global.json
+
+      - name: Restore packages
+        run: dotnet restore LibSsh2CS.slnx --locked-mode
+
+      - name: Verify formatting
+        run: dotnet format LibSsh2CS.slnx --verify-no-changes --no-restore
+
+      - name: Build Release
+        run: dotnet build LibSsh2CS.slnx -c Release --no-restore -p:ContinuousIntegrationBuild=true
+
+      - name: Test coverage checker
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+
+      - name: Verify integration prerequisites
+        run: |
+          test "$(docker info --format '{{.OSType}}')" = linux
+          command -v ssh-agent
+          command -v ssh-add
+
+      - name: Run tests with coverage
+        id: tests
+        run: |
+          dotnet test --solution LibSsh2CS.slnx -c Release --no-build \
+            --results-directory ./artifacts/coverage -- \
+            --coverlet --coverlet-output-format cobertura \
+            --coverlet-include '[LibSsh2CS]*' \
+            --report-xunit-trx --fail-skips on
+
+      - name: Generate combined coverage report
+        id: coverage
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        run: |
+          # Both suites must contribute; never silently report partial coverage.
+          test "$(find artifacts/coverage -maxdepth 1 -name '*.cobertura.*.xml' | wc -l)" -eq 2
+          dotnet tool restore
+          dotnet reportgenerator \
+            '-reports:./artifacts/coverage/*.cobertura.*.xml' \
+            '-targetdir:./artifacts/coverage/report' \
+            '-assemblyfilters:+LibSsh2CS' \
+            '-reporttypes:Html;MarkdownSummary;Cobertura'
+
+      - name: Enforce coverage thresholds
+        if: ${{ !cancelled() && steps.coverage.outcome == 'success' }}
+        run: |
+          python3 .github/scripts/check_coverage.py artifacts/coverage/report \
+            --line-threshold 90 --branch-threshold 80
+
+      - name: Pack library and symbols
+        run: |
+          dotnet pack source/LibSsh2CS/LibSsh2CS.csproj -c Release --no-build \
+            -p:ContinuousIntegrationBuild=true \
+            -p:IncludeSymbols=true -p:SymbolPackageFormat=snupkg \
+            -p:RepositoryUrl="${{ github.server_url }}/${{ github.repository }}" \
+            -p:RepositoryType=git -o artifacts/packages
+
+      - name: Verify release packages
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          tag = os.environ['RELEASE_TAG']
+          if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?', tag):
+              raise SystemExit('Expected a release tag such as v1.0.1 or v1.1.0-rc.1')
+          version = tag[1:]
+          directory = Path('artifacts/packages')
+          for extension, payload in [('nupkg', 'dll'), ('snupkg', 'pdb')]:
+              packages = list(directory.glob(f'*.{extension}'))
+              if len(packages) != 1:
+                  raise SystemExit(f'Expected exactly one .{extension} package')
+              with ZipFile(packages[0]) as package:
+                  metadata = ET.fromstring(package.read('LibSsh2CS.nuspec'))
+                  if metadata.findtext('{*}metadata/{*}id') != 'LibSsh2CS':
+                      raise SystemExit('Unexpected package ID')
+                  actual = metadata.findtext('{*}metadata/{*}version')
+                  if actual != version:
+                      raise SystemExit(f'Tag version {version} does not match package version {actual}')
+                  repository = metadata.find('{*}metadata/{*}repository')
+                  if repository is None or repository.get('commit') != os.environ['RELEASE_COMMIT']:
+                      raise SystemExit('Package repository commit does not match the release')
+                  if f'lib/net11.0/LibSsh2CS.{payload}' not in package.namelist():
+                      raise SystemExit(f'Missing {payload} payload')
+          print(f'Validated LibSsh2CS {version} package and symbols')
+          PY
+          cp global.json artifacts/packages/global.json
+
+      - name: Upload release packages
+        id: packages
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: nuget-packages
+          path: artifacts/packages/
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload test results
+        if: ${{ !cancelled() && hashFiles('artifacts/coverage/**') != '' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: release-test-results
+          path: artifacts/coverage/
+          retention-days: 14
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    environment: nuget
+    defaults:
+      run:
+        working-directory: artifacts/packages
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download tested release packages
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          merge-multiple: true
+          path: artifacts/packages
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          global-json-file: artifacts/packages/global.json
+
+      - name: Authenticate to NuGet
+        id: login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      # Push symbols explicitly so rerunning a partially successful publish retries both.
+      - name: Publish package
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: |
+          dotnet nuget push "*.nupkg" \
+            --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json \
+            --no-symbols --skip-duplicate
+
+      - name: Publish symbols
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: |
+          dotnet nuget push "*.snupkg" \
+            --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate

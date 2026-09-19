@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
+    <GitVersionBaseDirectory>$(MSBuildThisFileDirectory)</GitVersionBaseDirectory>
+    <NBGV_EmitThisAssemblyClass>false</NBGV_EmitThisAssemblyClass>
+
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+
+    <!-- **Suppression for all projects. Be careful since the suppressions are for production code** -->
+    <!-- CA1002: Do not expose generic lists -->
+    <!-- Justification: We allow this for simplicity for the code. -->
+    <!-- CA1054: URI parameters should not be strings -->
+    <!-- Justification: We use strings because we want to control the content of the parameter. -->
+    <!-- CA1056:URI-like properties should not be strings -->
+    <!-- Justification: We use strings because we want to control the content of the property. -->
+    <!-- CA1815: Override equals and operator equals on value types -->
+    <!-- Justification: We do not mainly use value types for comparison. -->
+    <!-- CA1819: Properties should not return arrays -->
+    <!-- Justification: Usually for performance reason. -->
+    <!-- CA1711: Identifiers should not have incorrect suffix -->
+    <!-- Justification: We allow this for representing business logic better. -->
+    <NoWarn>$(NoWarn);CA1002;CA1054;CA1056;CA1711;CA1815;CA1819</NoWarn>
+
+    <!-- **Suppression for unit test and integration test projects.** -->
+    <!-- CA1001: Types that own disposable fields should be disposable -->
+    <!-- CA1002: Do not expose generic lists -->
+    <!-- CA1024: Use properties where appropriate -->
+    <!-- CA1034: Nested types should not be visible -->
+    <!-- CA1045: Do not pass types by reference -->
+    <!-- CA1055: URI return values should not be strings -->
+    <!-- CA1062: Validate arguments of public methods -->
+    <!-- CA1506: Avoid excessive class coupling -->
+    <!-- CA1707: Identifiers should not contain underscores -->
+    <!-- CA1716: Identifiers should not match keywords -->
+    <!-- CA1819: Properties should not return arrays-->
+    <!-- CA1835: Prefer the memory-based overloads of ReadAsync/WriteAsync methods in stream-based classes -->
+    <!-- CA1851: Possible multiple enumerations of IEnumerable collection -->
+    <!-- CA1852: Seal internal types -->
+    <!-- CA1859: Use concrete types when possible for improved performance -->
+    <!-- CA1861: Avoid constant arrays as arguments -->
+    <!-- CA1873: Avoid potentially expensive logging -->
+    <!-- CA2000: Dispose objects before losing scope -->
+    <!-- CA2007: Do not directly await a Task -->
+    <!-- CA2012: Use ValueTasks correctly -->
+    <!-- CA2201: Do not raise reserved exception types -->
+    <!-- CA2214: Do not call overridable methods in constructors -->
+    <!-- CA2227: Collection properties should be read only -->
+    <!-- CA5394: Do not use insecure randomness -->
+    <!-- xUnit1044: Avoid using TheoryData type arguments that are not serializable -->
+    <!-- xUnit1045: Avoid using TheoryData type arguments that might not be serializable -->
+    <!-- xUnit2025: The boolean assertion statement can be simplified -->
+    <NoWarnForTestProjects>CA1001;CA1002;CA1024;CA1034;CA1045;CA1055;CA1062;CA1506;CA1707;CA1716;CA1819;CA1835;CA1851;CA1852;CA1859;CA1861;CA1873;CA2000;CA2007;CA2012;CA2201;CA2214;CA2227;CA5394;xUnit1030;xUnit1044;xUnit1045;xUnit2025;$(NoWarn)</NoWarnForTestProjects>
+
+    <!-- **Suppression for sample projects.** -->
+    <!-- CA1303: Do not pass literals as localized parameters -->
+    <!-- CA1848: Use the LoggerMessage delegates -->
+    <!-- CA1822: Mark members as static -->
+    <NoWarnForSampleProjects>CA1303;CA1848;CA1822;$(NoWarnForTestProjects)</NoWarnForSampleProjects>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Nerdbank.GitVersioning" Version="3.10.91" PrivateAssets="All" Condition=" '$(NBGV_Disabled)' != 'true' "/>
+  </ItemGroup>
+</Project>

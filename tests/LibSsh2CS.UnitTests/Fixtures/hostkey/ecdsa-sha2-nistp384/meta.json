@@ -1,0 +1,17 @@
+{
+  "hostkey": "ecdsa-sha2-nistp384",
+  "kex": "curve25519-sha256",
+  "hash": "SHA-256",
+  "field_lengths": {
+    "VC": 26,
+    "VS": 41,
+    "IC": 192,
+    "IS": 795,
+    "KS": 136,
+    "E": 32,
+    "F": 32,
+    "K": 32,
+    "H": 32,
+    "SIG": 132
+  }
+}

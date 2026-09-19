@@ -1,0 +1,12 @@
+{
+  "host": "127.0.0.1",
+  "port": 2222,
+  "hostForm": "[127.0.0.1]:2222",
+  "types": [
+      { "wireName": "ssh-ed25519", "blob": "ed25519_blob.bin", "knownHostKeyType": "Ed25519" },
+      { "wireName": "ecdsa-sha2-nistp256", "blob": "ecdsa256_blob.bin", "knownHostKeyType": "Ecdsa256" },
+      { "wireName": "ecdsa-sha2-nistp384", "blob": "ecdsa384_blob.bin", "knownHostKeyType": "Ecdsa384" },
+      { "wireName": "ecdsa-sha2-nistp521", "blob": "ecdsa521_blob.bin", "knownHostKeyType": "Ecdsa521" },
+      { "wireName": "ssh-rsa", "blob": "rsa_blob.bin", "knownHostKeyType": "SshRsa" }
+  ]
+}
