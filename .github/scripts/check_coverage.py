@@ -1,4 +1,4 @@
-"""Report LibSsh2CS Cobertura coverage, optionally enforcing agreed thresholds."""
+"""Enforce LibSsh2CS coverage thresholds using a merged Cobertura report."""
 
 import argparse
 import os
@@ -7,12 +7,8 @@ import re
 import xml.etree.ElementTree as ET
 
 
-def check_coverage(directory, line_threshold=None, branch_threshold=None):
-    reports = list(directory.glob("*.cobertura.*.xml")) + list(directory.glob("Cobertura.xml"))
-    if len(reports) != 1:
-        raise ValueError(f"Expected exactly one Cobertura report; found {len(reports)}.")
-
-    root = ET.parse(reports[0]).getroot()
+def check_coverage(directory, line_threshold, branch_threshold):
+    root = ET.parse(directory / "Cobertura.xml").getroot()
     if root.tag != "coverage":
         raise ValueError("Expected a Cobertura coverage root.")
     packages = root.findall("./packages/package")
@@ -35,15 +31,14 @@ def check_coverage(directory, line_threshold=None, branch_threshold=None):
             raise ValueError(f"Invalid or empty {metric} coverage: {covered}/{valid}.")
 
         # Compare exact integer counts; rounding is only for display.
-        if threshold is not None and not 0 <= threshold <= 100:
+        if not 0 <= threshold <= 100:
             raise ValueError("Coverage thresholds must be between 0 and 100.")
-        meets_threshold = threshold is None or covered * 100 >= valid * threshold
+        meets_threshold = covered * 100 >= valid * threshold
         passed &= meets_threshold
-        result = "REPORT" if threshold is None else ("PASS" if meets_threshold else "FAIL")
-        minimum = "Pending" if threshold is None else f"{threshold}%"
+        result = "PASS" if meets_threshold else "FAIL"
         rows.append(
             f"| {metric.capitalize()} | {covered}/{valid} | "
-            f"{covered / valid:.2%} | {minimum} | {result} |"
+            f"{covered / valid:.2%} | {threshold}% | {result} |"
         )
 
     summary = "\n".join([
@@ -59,9 +54,9 @@ def check_coverage(directory, line_threshold=None, branch_threshold=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("directory", type=Path, help="Directory containing one raw or merged Cobertura report")
-    parser.add_argument("--line-threshold", type=int)
-    parser.add_argument("--branch-threshold", type=int)
+    parser.add_argument("directory", type=Path, help="Directory containing the merged Cobertura.xml report")
+    parser.add_argument("--line-threshold", type=int, required=True)
+    parser.add_argument("--branch-threshold", type=int, required=True)
     args = parser.parse_args()
     try:
         passed, summary = check_coverage(args.directory, args.line_threshold, args.branch_threshold)

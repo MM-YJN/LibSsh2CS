@@ -15,7 +15,7 @@ class CoverageTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
-        self.report = self.directory / "coverage.cobertura.test.xml"
+        self.report = self.directory / "Cobertura.xml"
 
     def write_report(self, lines="95", branches="90", valid="100"):
         self.report.write_text(
@@ -43,40 +43,26 @@ class CoverageTests(unittest.TestCase):
                 self.assertFalse(passed)
                 self.assertIn("FAIL", summary)
 
-    def test_report_only_accepts_low_coverage(self):
-        self.write_report(lines="1", branches="0")
-        passed, summary = check_coverage(self.directory)
-        self.assertTrue(passed)
-        self.assertEqual(summary.count("REPORT"), 2)
-        self.assertEqual(summary.count("Pending"), 2)
-
-    def test_cli_reports_without_thresholds(self):
-        self.write_report(lines="1", branches="0")
-        result = subprocess.run(
-            [sys.executable, str(Path(__file__).with_name("check_coverage.py")),
-             str(self.directory)],
-            capture_output=True, text=True, check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Pending", result.stdout)
-        self.assertNotIn("FAIL", result.stdout)
-
-    def test_merged_report(self):
+    def test_cli_requires_both_thresholds(self):
         self.write_report()
-        self.report.rename(self.directory / "Cobertura.xml")
-        passed, _ = check_coverage(self.directory)
-        self.assertTrue(passed)
-        self.write_report()
-        with self.assertRaises(ValueError):
-            check_coverage(self.directory)
+        for arguments in ([], ["--line-threshold", "95"], ["--branch-threshold", "90"]):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run(
+                    [sys.executable, str(Path(__file__).with_name("check_coverage.py")),
+                     str(self.directory), *arguments],
+                    env={**os.environ, "GITHUB_STEP_SUMMARY": ""},
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("required", result.stderr)
 
     def test_invalid_thresholds(self):
         self.write_report()
         for threshold in (-1, 101):
             with self.assertRaises(ValueError):
-                check_coverage(self.directory, threshold, None)
+                check_coverage(self.directory, threshold, 90)
             with self.assertRaises(ValueError):
-                check_coverage(self.directory, None, threshold)
+                check_coverage(self.directory, 95, threshold)
 
     def test_invalid_counts(self):
         for lines, branches, valid in (
@@ -90,14 +76,12 @@ class CoverageTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     check_coverage(self.directory, 95, 90)
 
-    def test_missing_and_ambiguous_reports(self):
-        with self.assertRaises(ValueError):
+    def test_requires_merged_report(self):
+        with self.assertRaises(FileNotFoundError):
             check_coverage(self.directory, 95, 90)
         self.write_report()
-        (self.directory / "coverage.cobertura.second.xml").write_bytes(
-            self.report.read_bytes()
-        )
-        with self.assertRaises(ValueError):
+        self.report.rename(self.directory / "coverage.cobertura.test.xml")
+        with self.assertRaises(FileNotFoundError):
             check_coverage(self.directory, 95, 90)
 
     def test_wrong_scope_and_empty_data(self):
