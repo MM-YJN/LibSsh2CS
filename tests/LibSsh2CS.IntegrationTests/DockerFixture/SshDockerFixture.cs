@@ -6,7 +6,7 @@ namespace LibSsh2CS.IntegrationTests.DockerFixture;
 /// Static facade for SSH-over-Docker integration tests: exposes the
 /// in-container constants (<see cref="TestUser"/>, <see cref="TestPassword"/>,
 /// <see cref="Host"/>) and the Docker-reachability gate
-/// (<see cref="SkipIfDockerNotAvailable"/>). The build-vs-run split lives
+/// (<see cref="SkipIfDockerNotAvailableAsync"/>). The build-vs-run split lives
 /// in <see cref="SshImageFixtureBase"/> (one built image per variant,
 /// shared across tests via its subclass assembly fixtures) and
 /// <see cref="SshDockerContainer"/> (a fresh per-test container started
@@ -31,13 +31,13 @@ namespace LibSsh2CS.IntegrationTests.DockerFixture;
 /// variant (auth disabled, no user created).
 /// </para>
 /// <para>
-/// <b>Gating.</b> <see cref="ShouldRun"/> gates the tests — they skip when
-/// Docker is not reachable (socket on Unix, named pipe on Windows).
+/// <b>Gating.</b> <see cref="ShouldRunAsync"/> gates the tests — they skip
+/// when a reachable Linux container engine is unavailable.
 /// <see cref="SshImageFixtureBase.StartContainerAsync"/> calls
-/// <see cref="SkipIfDockerNotAvailable"/> internally, so tests that start a
-/// container don't need their own skip call. Tests that don't start a
+/// <see cref="SkipIfDockerNotAvailableAsync"/> internally, so tests that start
+/// a container don't need their own skip call. Tests that don't start a
 /// container (e.g. the agent tests that only exercise the host-side agent)
-/// call <see cref="SkipIfDockerNotAvailable"/> explicitly.
+/// call <see cref="SkipIfDockerNotAvailableAsync"/> explicitly.
 /// </para>
 /// <para>
 /// <b>Container host keys</b> are baked into the image at build time (via
@@ -57,27 +57,21 @@ internal static class SshDockerFixture
     /// <summary>Container host as seen from the test process (always loopback).</summary>
     public const string Host = "127.0.0.1";
 
-    /// <summary>
-    /// True iff Docker appears reachable (socket on Unix, named pipe on
-    /// Windows).
-    /// </summary>
-    public static bool ShouldRun()
-    {
-        return File.Exists("/var/run/docker.sock")
-            || (OperatingSystem.IsWindows() && Directory.Exists(@"\\.\pipe\docker_engine"));
-    }
+    private static readonly Lazy<Task<string?>> s_dockerSkipReason = new(() =>
+        DockerPrerequisite.ProbeAsync(DockerPrerequisite.CreateStartInfo(), TimeSpan.FromSeconds(10)));
+
+    /// <summary>True iff Docker reports a reachable Linux container engine.</summary>
+    public static async Task<bool> ShouldRunAsync() => await s_dockerSkipReason.Value.ConfigureAwait(false) is null;
 
     /// <summary>
-    /// Skips the current test when Docker is not reachable. Called internally
-    /// by <see cref="SshImageFixtureBase.StartContainerAsync"/>; tests that
-    /// start a container do not need to call this themselves. Tests that
-    /// don't start a container (e.g. agent-only tests) call this explicitly.
+    /// Skips the current test unless a Linux container engine is reachable.
+    /// Image-build and container failures after this check remain failures.
     /// </summary>
-    public static void SkipIfDockerNotAvailable()
+    public static async Task SkipIfDockerNotAvailableAsync()
     {
-        if (!ShouldRun())
+        if (await s_dockerSkipReason.Value.ConfigureAwait(false) is string reason)
         {
-            Assert.Skip("Docker not reachable; skipping test.");
+            Assert.Skip(reason);
         }
     }
 

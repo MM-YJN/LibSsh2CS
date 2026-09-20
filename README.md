@@ -85,8 +85,9 @@ known-hosts verification, and channel usage.
 This is a port of portions of libssh2, with an asynchronous C# API. It does not
 provide every native libssh2 feature. SFTP and SCP clients are not implemented;
 `SubsystemAsync("sftp")` opens a subsystem channel but does not implement the
-SFTP protocol. The SSH agent transport currently supports Unix domain sockets;
-Pageant and Windows OpenSSH named-pipe backends are not implemented.
+SFTP protocol. The SSH agent transport supports Unix domain sockets on every
+platform and PuTTY Pageant on Windows; the Windows OpenSSH named-pipe backend
+is not implemented.
 
 Unit tests cover protocol behavior and cryptographic fixtures. Docker integration
 tests exercise live OpenSSH servers, including authentication, channels,
@@ -116,10 +117,49 @@ dotnet test --solution LibSsh2CS.slnx --no-build
 Tests use xUnit v3 on Microsoft Testing Platform, not VSTest. Integration tests
 require Docker with Linux containers and network access to build the OpenSSH
 images. Agent tests also require `ssh-agent` and `ssh-add` on `PATH`.
-Docker-dependent tests skip when Docker is unreachable; agent tests skip when
-those binaries are missing. Report skips separately from successful integration
-validation. Fixture setup can take 10 minutes even for a single integration test;
+Docker-dependent tests use a cached, 10-second `docker info` probe and skip when
+the Docker CLI or engine is unavailable, the probe times out, or the engine runs
+Windows containers. Once that prerequisite passes, image-build and test failures
+remain failures. OpenSSH agent tests skip when their binaries are missing.
+Report skips separately from successful integration validation. Fixture setup can take 10 minutes even for a single integration test;
 allow additional time for test execution.
+
+Windows agent IPC tests need no installation: they launch the `PageantTestHost`
+fixture program, which the integration test project builds and stages next to
+the test assembly, so `dotnet test --project tests/LibSsh2CS.IntegrationTests`
+runs them on its own. Tests against a real `pageant.exe` are opt-in — set
+`LIBSSH2CS_TEST_PAGEANT=1`
+(and optionally `LIBSSH2CS_PAGEANT_PATH`) only on a machine or session where no
+agent is already running. Pageant treats an agent that is running anywhere in
+the session as "already running" and would load keys into it rather than
+starting an isolated instance, so those tests refuse to run when one is
+present. Both Pageant classes skip on non-Windows systems, including when the
+real-Pageant opt-in variable is set. On Windows, opting in makes a missing
+Pageant executable or an already-running agent a test failure.
+
+[CI](.github/workflows/ci.yml) runs the entire solution in Release without test
+filters on Linux and Windows. Linux retains coverage enforcement and checks its
+Docker and OpenSSH agent prerequisites. Windows builds the Pageant fixture and
+runs both Pageant classes, using a checksum-pinned standalone x64 Pageant 0.85.
+Standard hosted Windows runners do not provide a Linux container engine, so
+Linux-container tests skip. Windows TRX results are uploaded from
+`artifacts/windows-tests/` even after test failures and retained for 14 days.
+
+To reproduce Windows validation in PowerShell in a session without an agent:
+
+```powershell
+dotnet restore LibSsh2CS.slnx --locked-mode
+dotnet build LibSsh2CS.slnx -c Release --no-restore
+$pageantPath = Join-Path $env:TEMP 'libssh2cs-pageant-0.85.exe'
+Invoke-WebRequest 'https://the.earth.li/~sgtatham/putty/0.85/w64/pageant.exe' -OutFile $pageantPath
+$expectedHash = '3bd76b57fcd09acc948268c753ea2077b0c557ca435323301a9b572661f98ecd'
+if ((Get-FileHash $pageantPath -Algorithm SHA256).Hash -ne $expectedHash) {
+    throw 'Pageant SHA-256 checksum mismatch.'
+}
+$env:LIBSSH2CS_TEST_PAGEANT = '1'
+$env:LIBSSH2CS_PAGEANT_PATH = $pageantPath
+dotnet test --solution LibSsh2CS.slnx -c Release --no-build --results-directory ./artifacts/windows-tests -- --report-xunit-trx
+```
 
 Run just the unit suite after building:
 

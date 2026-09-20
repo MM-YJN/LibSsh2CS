@@ -33,7 +33,7 @@ namespace LibSsh2CS.IntegrationTests.Transport;
 /// </para>
 /// <para>
 /// <b>Gating:</b> <see cref="SshImageFixtureBase.StartContainerAsync"/>
-/// calls <see cref="SshDockerFixture.SkipIfDockerNotAvailable"/> internally,
+/// calls <see cref="SshDockerFixture.SkipIfDockerNotAvailableAsync"/> internally,
 /// so the test skips (not fails) when Docker is not reachable.
 /// </para>
 /// </remarks>

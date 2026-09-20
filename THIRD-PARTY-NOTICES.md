@@ -162,6 +162,32 @@ an upstream SPDX label differs from the accompanying wording.
  */
 ```
 
+#### `src/agent.c` — Pageant portions (PuTTY-derived)
+
+The Pageant backend of `src/agent.c` (`agent_connect_pageant`,
+`agent_transact_pageant`, `agent_disconnect_pageant`) is translated into
+`source/LibSsh2CS/Agent/PageantIpc.cs`,
+`source/LibSsh2CS/Agent/PageantWindowChannel.cs`, and
+`source/LibSsh2CS/Agent/PageantAgentTransport.cs`. Upstream marks those
+functions as taken from PuTTY and carries the following notice, which the
+translation retains:
+
+```text
+/* Code to talk to Pageant was taken from PuTTY.
+ *
+ * Portions copyright Robert de Bath, Joris van Rantwijk, Delian
+ * Delchev, Andreas Schultz, Jeroen Massar, Wez Furlong, Nicolas
+ * Barry, Justin Bradford, Ben Harris, Malcolm Smith, Ahmad Khalifa,
+ * Markus Kuhn, Colin Watson, and CORE SDI S.A.
+ */
+```
+
+The `src/agent.c` BSD-3-Clause terms above apply to this translation as well.
+Only the client side of the Pageant interface is translated: no PuTTY source
+files are copied into this repository and no PuTTY binaries are redistributed.
+PuTTY is distributed under its own licence:
+<https://www.chiark.greenend.org.uk/~sgtatham/putty/licence.html>
+
 #### `src/bcrypt_pbkdf.c`
 
 ```text
@@ -965,3 +991,49 @@ The upstream LICENSE is preserved below:
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 ```
+
+## CsWin32-generated Windows bindings
+
+Upstream: https://github.com/microsoft/CsWin32 and
+https://github.com/microsoft/win32metadata
+
+The Windows entry points the Pageant agent backend, the fake-Pageant IPC
+fixture, and the real-Pageant compatibility tests call are not declared by
+hand. CsWin32 generates those declarations from a build task — so they chain
+into the `LibraryImport` source generator rather than depending on the runtime
+marshaler — from the Win32 metadata in the
+`Microsoft.Windows.SDK.Win32Metadata` and
+`Microsoft.Windows.WDK.Win32Metadata` packages, driven by each project's
+`NativeMethods.txt`; the `Microsoft.Windows.SDK.Win32Docs` package supplies
+their documentation comments. The generator is referenced with
+`PrivateAssets="all"`, and its output is written to `obj/` — it is not part of
+the repository, the `LibSsh2CS` package, or any other distribution.
+
+CsWin32, the Win32 metadata, and the WDK metadata are MIT licensed:
+
+```text
+The MIT License (MIT)
+
+Copyright (c) Microsoft Corporation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+The metadata repositories note that they do not change the licenses of the
+original Windows SDK headers the metadata is produced from.

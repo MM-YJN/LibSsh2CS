@@ -5,8 +5,9 @@ namespace LibSsh2CS.Agent;
 /// <summary>
 /// The byte-transport abstraction underlying <see cref="SshAgent"/>.
 /// Implementations provide a single request/response round-trip over a
-/// backend-specific transport (Unix domain socket today; Windows Pageant and
-/// Windows OpenSSH named-pipe later). Parity with libssh2's <c>agent_ops</c>
+/// backend-specific transport (<see cref="UnixSocketAgentTransport"/> for
+/// <c>$SSH_AUTH_SOCK</c>, <see cref="PageantAgentTransport"/> for PuTTY Pageant
+/// on Windows). Parity with libssh2's <c>agent_ops</c>
 /// vtable (<c>agent.c:130-146</c>): <c>connect</c> / <c>transact</c> /
 /// <c>disconnect</c>.
 /// </summary>
@@ -22,9 +23,10 @@ namespace LibSsh2CS.Agent;
 /// <b>Pageant caveat.</b> The Windows Pageant backend is request/response via
 /// <c>WM_COPYDATA</c> + file mapping — not a stream. Modeling the abstraction
 /// as <c>TransactAsync(request) → response</c> (rather than as
-/// <c>System.IO.Pipelines.IDuplexPipe</c>) accommodates Pageant honestly:
-/// each backend may batch the entire round-trip internally if it cannot honor
-/// streaming read/write.
+/// <c>System.IO.Pipelines.IDuplexPipe</c>) is what lets that backend be
+/// expressed honestly: it batches the entire round trip internally, and a
+/// canceled transaction may still be processed by Pageant because the native
+/// send cannot be interrupted.
 /// </para>
 /// <para>
 /// <b>Concurrency.</b> Implementations are not required to be internally

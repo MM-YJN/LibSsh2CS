@@ -118,8 +118,12 @@ also available through `SshUserAuth`.
 
 ## Authenticate through an SSH agent
 
-The default agent connection uses the Unix socket named by `SSH_AUTH_SOCK`.
-You can also pass a socket path to the `SshAgent` constructor.
+`new SshAgent()` discovers the agent when `ConnectAsync` runs: on Windows it
+tries Pageant first and then the Unix socket named by `SSH_AUTH_SOCK`, and on
+other platforms it uses the Unix socket. Passing a socket path to the
+constructor — or setting `IdentityPath` before connecting, which is rejected
+once a connect has started or the agent is connected — pins the client to that
+Unix socket and skips discovery.
 
 ```csharp
 using LibSsh2CS.Agent;
@@ -136,8 +140,26 @@ await agent.AuthenticateWithIdentityAsync(session, "alice", identities[0], ct);
 ```
 
 This example selects the first identity; choose the identity authorized for your
-account. The agent performs the signing. Pageant and Windows named-pipe agent
-transports are not implemented.
+account. The agent performs the signing.
+
+Pageant is reached through its legacy `WM_COPYDATA` and file-mapping interface,
+so the client and Pageant must run in the same Windows session and user context.
+Requests are limited to 8188 bytes. A request waits — for an earlier request to
+finish and for Pageant to answer — for at most five minutes, long enough for
+Pageant's confirmation and passphrase prompts; that bound applies to the caller,
+not to Pageant's work: the request travels through a synchronous window message
+that completes only when Pageant's window procedure has processed it. The
+mapping must stay valid for as long as Pageant can still read it, so a timeout
+or cancellation releases the caller immediately while the worker keeps the
+native send, the mapping, and the message data alive until that send returns;
+Pageant may still act on a request it already received, and a Pageant that never
+returns can retain that worker until its window procedure returns or its process
+exits. Only one request can be outstanding across all Pageant transports,
+including reconnects and separate `SshAgent` instances. A retry waits for that
+worker instead of starting a second native send, so repeated reconnects cannot
+accumulate workers, mappings, or pinned message data. Disconnecting or disposing
+an agent does not release the outstanding native request slot. The Windows OpenSSH
+named-pipe agent backend is not implemented.
 
 ## Read command output and send input
 

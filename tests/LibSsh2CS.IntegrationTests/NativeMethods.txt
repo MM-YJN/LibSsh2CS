@@ -1,0 +1,10 @@
+// Win32 APIs the Windows-only fixtures call, projected by CsWin32 (see
+// https://microsoft.github.io/CsWin32/docs/getting-started.html). The generated
+// members live on the internal Windows.Win32.PageantInterop class, which is
+// named in NativeMethods.json so it cannot collide with the identically named
+// types the referenced library generates.
+//
+// The real-Pageant compatibility tests use them to find the window the fixture
+// instance registered and to prove it belongs to the process they started.
+FindWindow
+GetWindowThreadProcessId

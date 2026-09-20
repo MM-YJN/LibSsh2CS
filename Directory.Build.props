@@ -10,6 +10,15 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
 
+    <!-- CsWin32 generates the Windows interop as a build task (writing the
+         declarations before compilation) so the entry points it emits chain
+         into the LibraryImport source generator instead of relying on the
+         runtime marshaler. The whole repository turns runtime marshalling off
+         to match: every interop signature is blittable, which is what keeps
+         the library NativeAOT- and trim-compatible. -->
+    <CsWin32RunAsBuildTask>true</CsWin32RunAsBuildTask>
+    <DisableRuntimeMarshalling>true</DisableRuntimeMarshalling>
+
     <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
 
     <!-- **Suppression for all projects. Be careful since the suppressions are for production code** -->

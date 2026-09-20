@@ -1,0 +1,22 @@
+// Win32 APIs this library calls, projected by CsWin32 (see
+// https://microsoft.github.io/CsWin32/docs/getting-started.html). The generated
+// members live on the internal Windows.Win32.PInvoke class.
+//
+// Everything Pageant needs: the window lookup, the WM_COPYDATA hand-off, and the
+// shared mapping the request and response travel through. Enum names are
+// requested rather than their individual members because that is how CsWin32
+// names them; PAGE_PROTECTION_FLAGS is qualified because the WDK defines a
+// second PAGE_READWRITE.
+CloseHandle
+COPYDATASTRUCT
+CreateFileMapping
+FILE_MAP
+FindWindow
+GetCurrentThreadId
+INVALID_HANDLE_VALUE
+MapViewOfFile
+SendMessage
+UnmapViewOfFile
+WIN32_ERROR
+WM_COPYDATA
+Windows.Win32.System.Memory.PAGE_PROTECTION_FLAGS

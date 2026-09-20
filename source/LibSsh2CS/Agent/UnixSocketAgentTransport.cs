@@ -7,9 +7,10 @@ namespace LibSsh2CS.Agent;
 /// <summary>
 /// SSH agent transport over a POSIX Unix domain socket
 /// (<c>$SSH_AUTH_SOCK</c>). Parity with <c>agent_ops_unix</c>
-/// (<c>agent.c:172-325</c>). The socket is the only SSH agent backend in
-/// use; Windows Pageant and Windows OpenSSH named-pipe backends
-/// are deferred (they will implement <see cref="IAgentTransport"/> when added).
+/// (<c>agent.c:172-325</c>). This is the backend used on every platform
+/// <see cref="AgentTransports"/> runs on, and on Windows it is the fallback
+/// used when Pageant is not running; the Windows OpenSSH named-pipe backend is
+/// not implemented.
 /// </summary>
 /// <remarks>
 /// <para>
