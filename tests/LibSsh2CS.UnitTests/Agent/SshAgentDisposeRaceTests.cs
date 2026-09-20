@@ -126,6 +126,8 @@ public class SshAgentDisposeRaceTests
         // connect that still holds the gate.
         Task dispose = agent.DisposeAsync().AsTask();
         Assert.False(dispose.IsCompleted);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => agent.ConnectAsync(ct));
+        Assert.Throws<ObjectDisposedException>(() => agent.IdentityPath = "/tmp/disposed.sock");
 
         // Discovery succeeds after disposal has already begun.
         transport.ReleaseConnect();
@@ -156,6 +158,8 @@ public class SshAgentDisposeRaceTests
 
         Task dispose = agent.DisposeAsync().AsTask();
         Assert.False(dispose.IsCompleted);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => agent.ConnectAsync(ct));
+        Assert.Throws<ObjectDisposedException>(() => agent.IdentityPath = "/tmp/disposed.sock");
 
         transport.ReleaseConnect();
 

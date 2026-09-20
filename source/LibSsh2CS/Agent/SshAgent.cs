@@ -71,7 +71,7 @@ public sealed class SshAgent : IAsyncDisposable
     private readonly SemaphoreSlim _operationLock = new(1, 1);
 
     /// <summary>
-    /// Guards <see cref="_connected"/>, <see cref="_identityPath"/>, and
+    /// Guards connection publication, disposal, <see cref="_identityPath"/>, and
     /// <see cref="_connectingAttempts"/> — the state that decides whether the
     /// client's configuration may still change. It is separate from
     /// <see cref="_operationLock"/>, which serializes transport work and is
@@ -131,7 +131,7 @@ public sealed class SshAgent : IAsyncDisposable
 
     /// <summary>
     /// Disposal flag: <c>0</c> while the agent is usable, <c>1</c> once
-    /// <see cref="DisposeAsync"/> has published disposal. It is set atomically
+    /// <see cref="DisposeAsync"/> has published disposal. It is set under the state lock
     /// before the gate is acquired, so a connect that is still resolving its
     /// backend can observe it and clean up instead of installing a transport
     /// into a disposed agent.
@@ -348,14 +348,12 @@ public sealed class SshAgent : IAsyncDisposable
                 // the transport afterwards would leak it and leave a disposed
                 // agent logically connected, so the winner is released and the
                 // caller sees the disposed state.
-                if (IsDisposed)
+                if (!TryPublishConnected(discovered))
                 {
                     await ReleaseAfterLostRaceAsync(discovered, CancellationToken.None).ConfigureAwait(false);
                     ThrowIfDisposed();
                 }
 
-                _transport = discovered;
-                SetConnected(true);
                 return;
             }
 
@@ -365,18 +363,11 @@ public sealed class SshAgent : IAsyncDisposable
             IAgentTransport transport = _transport ?? AgentTransports.Create(_identityPath!);
             await transport.ConnectAsync(cancellationToken).ConfigureAwait(false);
 
-            if (IsDisposed)
+            if (!TryPublishConnected(transport))
             {
                 await ReleaseAfterLostRaceAsync(transport, CancellationToken.None).ConfigureAwait(false);
                 ThrowIfDisposed();
             }
-
-            // Assigned only after a successful connect, so a failed attempt
-            // leaves the agent disconnected and re-connectable. A transport
-            // created here for an explicit path holds no resources once its
-            // own connect has failed, so it is simply dropped.
-            _transport = transport;
-            SetConnected(true);
         }
         finally
         {
@@ -547,9 +538,14 @@ public sealed class SshAgent : IAsyncDisposable
         // Publish disposal before waiting for the gate. New operations fail
         // immediately, and a second DisposeAsync becomes a no-op instead of
         // tearing down the same state twice.
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        lock (_stateLock)
         {
-            return;
+            if (IsDisposed)
+            {
+                return;
+            }
+
+            Volatile.Write(ref _disposed, 1);
         }
 
         // Acquire the gate so no operation is mid-flight on the transport when
@@ -639,6 +635,26 @@ public sealed class SshAgent : IAsyncDisposable
 
     /// <summary>True once <see cref="DisposeAsync"/> has published disposal.</summary>
     private bool IsDisposed => Volatile.Read(ref _disposed) != 0;
+
+    /// <summary>
+    /// Commits a successful connect atomically with respect to disposal.
+    /// Called with the operation gate held; cleanup of a losing transport is
+    /// awaited by the caller after the state lock has been released.
+    /// </summary>
+    private bool TryPublishConnected(IAgentTransport transport)
+    {
+        lock (_stateLock)
+        {
+            if (IsDisposed)
+            {
+                return false;
+            }
+
+            _transport = transport;
+            _connected = true;
+            return true;
+        }
+    }
 
     /// <summary>
     /// Publishes the connected state under <see cref="_stateLock"/>. Always

@@ -3,6 +3,8 @@ using System.Diagnostics;
 
 using LibSsh2CS.Agent;
 
+using Microsoft.Extensions.Time.Testing;
+
 namespace LibSsh2CS.UnitTests.Agent;
 
 /// <summary>
@@ -465,6 +467,59 @@ public class PageantAgentTransportTests
         Assert.Equal(0, abandonedWriter.WrittenCount);
     }
 
+    [Fact]
+    public async Task Transact_QueueAndResponseWait_ShareOneDeadline()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        var clock = new FakeTimeProvider();
+        using var firstGate = new ManualResetEventSlim(false);
+        using var secondGate = new ManualResetEventSlim(false);
+        var channel = new FakeChannel(windowPresent: true) { ReleaseTransact = firstGate };
+        channel.Enqueue([12]);
+        channel.Enqueue([13]);
+        channel.Enqueue([14]);
+        await using var transport = new PageantAgentTransport(channel, TimeSpan.FromMinutes(5), clock);
+        await transport.ConnectAsync(ct);
+        using var firstCancellation = new CancellationTokenSource();
+        Task first = transport.TransactAsync(new byte[] { 11 }, new ArrayBufferWriter<byte>(), firstCancellation.Token);
+        var writer = new ArrayBufferWriter<byte>();
+        try
+        {
+            Assert.True(channel.EnteredTransact.Wait(TimeSpan.FromSeconds(10), ct));
+            await firstCancellation.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+
+            Task second = transport.TransactAsync(new byte[] { 11 }, writer, ct);
+            clock.Advance(TimeSpan.FromMinutes(4));
+            Assert.False(second.IsCompleted);
+            Assert.Single(channel.Requests);
+
+            // The abandoned worker keeps its first gate; the queued request
+            // gets a different gate so its native response remains outstanding.
+            channel.EnteredTransact.Reset();
+            channel.ReleaseTransact = secondGate;
+            firstGate.Set();
+            Assert.True(channel.EnteredTransact.Wait(TimeSpan.FromSeconds(10), ct));
+            Assert.Equal(2, channel.Requests.Count);
+
+            clock.Advance(TimeSpan.FromMinutes(1));
+            SshException ex = await Assert.ThrowsAsync<SshException>(
+                () => second.WaitAsync(TimeSpan.FromSeconds(10), ct));
+            Assert.Equal(SshErrorCode.AgentProtocol, ex.ErrorCode);
+            Assert.IsType<TimeoutException>(ex.InnerException);
+            Assert.Equal(0, writer.WrittenCount);
+        }
+        finally
+        {
+            firstGate.Set();
+            secondGate.Set();
+            // Drain the native worker before disposing its blocking gate.
+            await transport.TransactAsync(new byte[] { 11 }, new ArrayBufferWriter<byte>(), ct);
+        }
+
+        Assert.Equal(0, writer.WrittenCount);
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // Outstanding-request slot
     // ════════════════════════════════════════════════════════════════════════
@@ -699,8 +754,9 @@ public class PageantAgentTransportTests
                     Requests.Add(requestPayload.ToArray());
                 }
 
+                ManualResetEventSlim? releaseTransact = ReleaseTransact;
                 EnteredTransact.Set();
-                ReleaseTransact?.Wait();
+                releaseTransact?.Wait();
 
                 if (TransactFailure is not null)
                 {

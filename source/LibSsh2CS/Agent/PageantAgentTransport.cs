@@ -75,6 +75,7 @@ internal sealed class PageantAgentTransport : IAgentTransport
 
     private readonly IPageantWindowChannel _channel;
     private readonly TimeSpan _transactTimeout;
+    private readonly TimeProvider _timeProvider;
 
     /// <summary>
     /// Admits one native round trip at a time. The send cannot be interrupted,
@@ -122,13 +123,16 @@ internal sealed class PageantAgentTransport : IAgentTransport
     /// How long a transaction waits for an earlier request to finish and for
     /// Pageant to answer it.
     /// </param>
-    internal PageantAgentTransport(IPageantWindowChannel channel, TimeSpan transactTimeout)
+    /// <param name="timeProvider">Clock used for the transaction deadline.</param>
+    internal PageantAgentTransport(
+        IPageantWindowChannel channel, TimeSpan transactTimeout, TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(channel);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(transactTimeout, TimeSpan.Zero);
 
         _channel = channel;
         _transactTimeout = transactTimeout;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -167,6 +171,12 @@ internal sealed class PageantAgentTransport : IAgentTransport
         IBufferWriter<byte> responseWriter,
         CancellationToken cancellationToken)
     {
+        // One deadline covers both queueing and the native response wait.
+        using var deadline = new CancellationTokenSource(_transactTimeout, _timeProvider);
+        using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, deadline.Token);
+        CancellationToken waitToken = waitCancellation.Token;
+
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(responseWriter);
         ThrowIfNotConnected();
@@ -181,7 +191,7 @@ internal sealed class PageantAgentTransport : IAgentTransport
         // return instead of starting a second send — which is what keeps a
         // Pageant that never answers from accumulating workers, mappings, and
         // pinned message data while callers keep retrying.
-        await AcquireNativeRequestSlotAsync(cancellationToken).ConfigureAwait(false);
+        await AcquireNativeRequestSlotAsync(waitToken, cancellationToken).ConfigureAwait(false);
 
         try
         {
@@ -191,6 +201,10 @@ internal sealed class PageantAgentTransport : IAgentTransport
             ThrowIfNotConnected();
             ThrowIfRequestTooLong(request.Length);
             cancellationToken.ThrowIfCancellationRequested();
+            if (deadline.IsCancellationRequested)
+            {
+                throw CreateTimeoutException();
+            }
         }
         catch
         {
@@ -227,22 +241,22 @@ internal sealed class PageantAgentTransport : IAgentTransport
         byte[] response;
         try
         {
-            response = await worker.WaitAsync(_transactTimeout, cancellationToken).ConfigureAwait(false);
+            response = await worker.WaitAsync(waitToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // The worker keeps the request and its slot until the native send
             // returns; only this caller stops waiting.
+            cancellationToken.ThrowIfCancellationRequested();
             throw;
         }
-        catch (TimeoutException timeout)
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
         {
             // The caller's bound elapsed while the request is already in
             // Pageant's hands. The worker keeps running (and keeps the
             // receiver-visible state alive) until the native send returns, so
             // only the wait is abandoned; a late response is discarded.
-            throw new SshException(SshErrorCode.AgentProtocol,
-                $"pageant did not answer within {(long)_transactTimeout.TotalMilliseconds} ms", timeout);
+            throw CreateTimeoutException();
         }
 
         // Cancellation that arrived while the worker was running is observed
@@ -258,27 +272,30 @@ internal sealed class PageantAgentTransport : IAgentTransport
     /// Waiting out the transaction timeout fails the caller instead of parking
     /// it behind a Pageant that never answers.
     /// </summary>
-    private async Task AcquireNativeRequestSlotAsync(CancellationToken cancellationToken)
+    private async Task AcquireNativeRequestSlotAsync(
+        CancellationToken waitToken, CancellationToken cancellationToken)
     {
-        string message =
-            $"an earlier pageant request is still outstanding after {(long)_transactTimeout.TotalMilliseconds} ms";
-
         try
         {
-            if (await _nativeRequestGate.WaitAsync(_transactTimeout, cancellationToken).ConfigureAwait(false))
-            {
-                return;
-            }
+            await _nativeRequestGate.WaitAsync(waitToken).ConfigureAwait(false);
         }
-        catch (TimeoutException timeout)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            throw new SshException(SshErrorCode.AgentProtocol, message, timeout);
+            cancellationToken.ThrowIfCancellationRequested();
+            throw;
         }
-
-        // An elapsed timeout is either thrown or reported through the task's
-        // result, depending on the overload, so both outcomes are handled.
-        throw new SshException(SshErrorCode.AgentProtocol, message);
+        catch (OperationCanceledException)
+        {
+            throw new SshException(SshErrorCode.AgentProtocol,
+                $"an earlier pageant request is still outstanding after {(long)_transactTimeout.TotalMilliseconds} ms",
+                new TimeoutException());
+        }
     }
+
+    private SshException CreateTimeoutException()
+        => new(SshErrorCode.AgentProtocol,
+            $"pageant did not answer within {(long)_transactTimeout.TotalMilliseconds} ms",
+            new TimeoutException());
 
     private void ThrowIfNotConnected()
     {
