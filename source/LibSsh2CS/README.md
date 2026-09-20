@@ -154,9 +154,11 @@ or cancellation releases the caller immediately while the worker keeps the
 native send, the mapping, and the message data alive until that send returns;
 Pageant may still act on a request it already received, and a Pageant that never
 returns can retain that worker until its window procedure returns or its process
-exits. Only one request can be outstanding at a time, so a retry waits for that
-worker instead of starting a second native send, and repeated retries cannot
-accumulate workers, mappings, or pinned message data. The Windows OpenSSH
+exits. Only one request can be outstanding across all Pageant transports,
+including reconnects and separate `SshAgent` instances. A retry waits for that
+worker instead of starting a second native send, so repeated reconnects cannot
+accumulate workers, mappings, or pinned message data. Disconnecting or disposing
+an agent does not release the outstanding native request slot. The Windows OpenSSH
 named-pipe agent backend is not implemented.
 
 ## Read command output and send input

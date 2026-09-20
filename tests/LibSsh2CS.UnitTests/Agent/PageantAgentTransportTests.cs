@@ -701,6 +701,120 @@ public class PageantAgentTransportTests
         await transport.DisposeAsync();
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Agent_ReconnectAfterAbandonedRequest_WaitsForOriginalWorker(
+        bool cancel, bool lateFailure)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        var clock = new FakeTimeProvider();
+        var timeout = TimeSpan.FromMinutes(5);
+        using var release = new ManualResetEventSlim(false);
+        var original = new FakeChannel(windowPresent: true)
+        {
+            ReleaseTransact = release,
+            TransactFailure = lateFailure
+                ? new SshException(SshErrorCode.AgentProtocol, "late native failure")
+                : null,
+        };
+        original.Enqueue([12, 0, 0, 0, 0]);
+        var replacements = new List<FakeChannel>();
+        int created = 0;
+        IAgentTransport CreateTransport()
+        {
+            FakeChannel channel;
+            if (created++ == 0)
+            {
+                channel = original;
+            }
+            else
+            {
+                channel = new FakeChannel(windowPresent: true);
+                channel.Enqueue([12, 0, 0, 0, 0]);
+                replacements.Add(channel);
+            }
+
+            return new PageantAgentTransport(channel, timeout, clock);
+        }
+
+        await using var agent = new SshAgent([CreateTransport]);
+        await using var otherAgent = new SshAgent([CreateTransport]);
+        try
+        {
+            // Every reconnect discovers a different transport and channel.
+            // None may bypass the worker retained by the disposed original.
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                await agent.ConnectAsync(ct);
+                using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                Task request = agent.ListIdentitiesAsync(cancellation.Token);
+                if (attempt == 0)
+                {
+                    Assert.True(original.EnteredTransact.Wait(TimeSpan.FromSeconds(10), ct));
+                }
+                else
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(100), ct);
+                    Assert.False(request.IsCompleted);
+                    Assert.All(replacements, channel => Assert.False(channel.EnteredTransact.IsSet));
+                }
+
+                if (cancel)
+                {
+                    await cancellation.CancelAsync();
+                    await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                        () => request.WaitAsync(TimeSpan.FromSeconds(10), ct));
+                }
+                else
+                {
+                    clock.Advance(timeout);
+                    SshException ex = await Assert.ThrowsAsync<SshException>(
+                        () => request.WaitAsync(TimeSpan.FromSeconds(10), ct));
+                    Assert.Equal(SshErrorCode.AgentProtocol, ex.ErrorCode);
+                    Assert.IsType<TimeoutException>(ex.InnerException);
+                    if (attempt > 0)
+                    {
+                        Assert.Contains("still outstanding", ex.Message);
+                    }
+                }
+
+                await agent.DisconnectAsync(ct);
+                Assert.False(agent.IsConnected);
+                Assert.Single(original.Requests);
+                Assert.False(original.ExitedTransact.IsSet);
+            }
+
+            // A separate agent must also wait, then recover when the original
+            // worker returns or faults. Abandoned callers consume no responses.
+            await otherAgent.ConnectAsync(ct);
+            Task<IReadOnlyList<SshAgentIdentity>> next = otherAgent.ListIdentitiesAsync(ct);
+            await Task.Delay(TimeSpan.FromMilliseconds(100), ct);
+            Assert.False(next.IsCompleted);
+            Assert.All(replacements, channel => Assert.False(channel.EnteredTransact.IsSet));
+
+            release.Set();
+            Assert.Empty(await next.WaitAsync(TimeSpan.FromSeconds(10), ct));
+            Assert.All(replacements.Take(replacements.Count - 1), channel => Assert.Empty(channel.Requests));
+            Assert.Single(replacements[^1].Requests);
+        }
+        finally
+        {
+            release.Set();
+            // Drain the shared slot even after an assertion failure, before
+            // disposing the event the native worker may still be using.
+            var drainChannel = new FakeChannel(windowPresent: true);
+            drainChannel.Enqueue([12]);
+            await using var drain = new PageantAgentTransport(drainChannel);
+            await drain.ConnectAsync(ct);
+            await drain.TransactAsync(new byte[] { 11 }, new ArrayBufferWriter<byte>(), ct)
+                .WaitAsync(TimeSpan.FromSeconds(10), ct);
+            Assert.True(original.ExitedTransact.Wait(TimeSpan.FromSeconds(10), ct));
+        }
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // Fake channel
     // ════════════════════════════════════════════════════════════════════════

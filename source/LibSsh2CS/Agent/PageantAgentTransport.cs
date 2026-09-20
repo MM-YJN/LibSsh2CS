@@ -10,8 +10,6 @@
  */
 
 using System.Buffers;
-using System.Diagnostics.CodeAnalysis;
-using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
 namespace LibSsh2CS.Agent;
@@ -46,9 +44,10 @@ namespace LibSsh2CS.Agent;
 /// request, the mapping, and the message data alive until the native send
 /// returns, then releases them, and its response is discarded. Pageant may
 /// still act on the request it already received and the transaction is not
-/// retried automatically. Only one native send is outstanding at a time: a
-/// later request waits for that worker to return — bounded by the same
-/// timeout — instead of starting a second send, so repeated retries against a
+/// retried automatically. Only one native send is outstanding across all
+/// transports, including reconnects and separate agents: a later request waits
+/// for that worker to return — bounded by the same timeout — instead of
+/// starting a second send, so repeated retries against a
 /// Pageant that never answers cannot pile up workers, mappings, or pinned
 /// message data. The timeout therefore bounds the caller, not the worker: a
 /// Pageant that never returns can retain one worker and one mapping
@@ -78,15 +77,14 @@ internal sealed class PageantAgentTransport : IAgentTransport
     private readonly TimeProvider _timeProvider;
 
     /// <summary>
-    /// Admits one native round trip at a time. The send cannot be interrupted,
-    /// so a request that follows an abandoned (timed-out or canceled) worker
-    /// waits here for that worker to return instead of starting a second send.
+    /// Admits one native round trip across all transports, including replacement
+    /// transports created by reconnecting or by another SshAgent. An abandoned
+    /// worker keeps the slot until its uninterruptible native send returns.
     /// </summary>
-    [SuppressMessage(
-        "Usage",
-        "CA2213:Disposable fields should be disposed",
-        Justification = "Disposing the gate would strand callers parked on it (SemaphoreSlim does not wake async waiters when it is disposed) and could throw from the completion continuation that hands the slot on after an abandoned native send returns. SemaphoreSlim holds no unmanaged resources unless AvailableWaitHandle is used, which this type never touches.")]
-    private readonly SemaphoreSlim _nativeRequestGate = new(1, 1);
+    // This shared gate outlives individual transports and must not be disposed:
+    // queued callers and abandoned workers still need to acquire/release it.
+    // AvailableWaitHandle is never used, so it owns no unmanaged resources.
+    private static readonly SemaphoreSlim s_nativeRequestGate = new(1, 1);
 
     private bool _connected;
     private bool _disposed;
@@ -209,7 +207,7 @@ internal sealed class PageantAgentTransport : IAgentTransport
         catch
         {
             // No worker was started, so the slot is this caller's to return.
-            _nativeRequestGate.Release();
+            s_nativeRequestGate.Release();
             throw;
         }
 
@@ -233,7 +231,7 @@ internal sealed class PageantAgentTransport : IAgentTransport
                 _ = completedWorker.Exception;
                 ((SemaphoreSlim)state!).Release();
             },
-            _nativeRequestGate,
+            s_nativeRequestGate,
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
@@ -277,7 +275,7 @@ internal sealed class PageantAgentTransport : IAgentTransport
     {
         try
         {
-            await _nativeRequestGate.WaitAsync(waitToken).ConfigureAwait(false);
+            await s_nativeRequestGate.WaitAsync(waitToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
