@@ -64,7 +64,7 @@ internal static class SshDockerFixture
     public static bool ShouldRun()
     {
         return File.Exists("/var/run/docker.sock")
-            || (OperatingSystem.IsWindows() && Directory.Exists(@"\\.\pipe\docker_engine"));
+            || (OperatingSystem.IsWindows() && File.Exists(@"\\.\pipe\docker_engine"));
     }
 
     /// <summary>
