@@ -1,0 +1,37 @@
+name: Test Report
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+# Fork PRs cannot create checks from CI's read-only token. This workflow only
+# parses artifacts; it does not check out or execute code from the tested PR.
+permissions:
+  contents: read
+  actions: read
+  checks: write
+
+jobs:
+  report:
+    if: ${{ github.event.workflow_run.conclusion != 'cancelled' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: Linux
+            artifact: linux-test-results
+          - os: Windows
+            artifact: windows-test-results
+    steps:
+      - name: Publish ${{ matrix.os }} test check
+        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3.0.0
+        with:
+          artifact: ${{ matrix.artifact }}
+          name: Tests - ${{ matrix.os }}
+          path: '**/*.trx'
+          reporter: dotnet-trx
+          use-actions-summary: 'false'
+          list-tests: failed

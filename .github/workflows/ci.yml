@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
+  linux-tests:
     runs-on: ubuntu-26.04
     timeout-minutes: 60
     steps:
@@ -77,11 +77,22 @@ jobs:
           python3 .github/scripts/check_coverage.py artifacts/coverage/report \
             --line-threshold 90 --branch-threshold 80
 
-      - name: Upload coverage and test results
+      - name: Summarize Linux test results
+        if: ${{ !cancelled() && hashFiles('artifacts/coverage/**/*.trx') != '' }}
+        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3.0.0
+        with:
+          name: Tests - Linux
+          report-title: Tests - Linux
+          path: artifacts/coverage/**/*.trx
+          reporter: dotnet-trx
+          use-actions-summary: 'true'
+          list-tests: failed
+
+      - name: Upload Linux coverage and test results
         if: ${{ !cancelled() && hashFiles('artifacts/coverage/**') != '' }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: coverage-and-test-results
+          name: linux-test-results
           path: artifacts/coverage/
           retention-days: 14
           if-no-files-found: error
@@ -127,6 +138,17 @@ jobs:
         run: >-
           dotnet test --solution LibSsh2CS.slnx -c Release --no-build
           --results-directory ./artifacts/windows-tests -- --report-xunit-trx
+
+      - name: Summarize Windows test results
+        if: ${{ !cancelled() && hashFiles('artifacts/windows-tests/**/*.trx') != '' }}
+        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3.0.0
+        with:
+          name: Tests - Windows
+          report-title: Tests - Windows
+          path: artifacts/windows-tests/**/*.trx
+          reporter: dotnet-trx
+          use-actions-summary: 'true'
+          list-tests: failed
 
       - name: Upload Windows test results
         if: ${{ always() && hashFiles('artifacts/windows-tests/**') != '' }}
