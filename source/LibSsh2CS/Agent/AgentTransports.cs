@@ -123,7 +123,7 @@ internal static class AgentTransports
             ? new SshException(SshErrorCode.AgentProtocol,
                 "No SSH agent backend available on this platform")
             : new SshException(SshErrorCode.AgentProtocol,
-                "No SSH agent backend available on this platform", lastFailure);
+                "Could not connect to any SSH agent backend", lastFailure);
     }
 
     /// <summary>
