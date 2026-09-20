@@ -22,7 +22,7 @@ namespace LibSsh2CS.IntegrationTests.Session;
 /// <para>
 /// <b>Gating.</b> The tests skip when ANY of the following is unavailable:
 /// <list type="bullet">
-///   <item>Docker (via <see cref="SshDockerFixture.ShouldRun"/>)</item>
+///   <item>Docker (via <see cref="SshDockerFixture.ShouldRunAsync"/>)</item>
 ///   <item><c>ssh-agent</c> binary on PATH</item>
 ///   <item><c>ssh-add</c> binary on PATH</item>
 /// </list>
@@ -30,7 +30,7 @@ namespace LibSsh2CS.IntegrationTests.Session;
 /// binaries-on-PATH requirement serves as the opt-in signal. The
 /// Docker-gated tests that start a container rely on
 /// <see cref="SshImageFixtureBase.StartContainerAsync"/>'s internal
-/// <see cref="SshDockerFixture.SkipIfDockerNotAvailable"/> call; the
+/// <see cref="SshDockerFixture.SkipIfDockerNotAvailableAsync"/> call; the
 /// agent-only tests (no container) call it explicitly.
 /// </para>
 /// <para>
@@ -183,7 +183,7 @@ public sealed class DockerAgentTests : IDisposable
     public async Task Agent_DisconnectAsync_ClosesSocket_AndSubsequentOpFails()
     {
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
-        SshDockerFixture.SkipIfDockerNotAvailable();
+        await SshDockerFixture.SkipIfDockerNotAvailableAsync().ConfigureAwait(false);
         SkipIfSshAgentBinariesMissing();
 
         byte[] privKeyBytes = FixtureLoader.LoadBytes("ed25519_plain_key");
@@ -262,7 +262,7 @@ public sealed class DockerAgentTests : IDisposable
             Assert.Skip("Windows discovery prefers Pageant over $SSH_AUTH_SOCK; covered by the discovery tests.");
         }
 
-        SshDockerFixture.SkipIfDockerNotAvailable();
+        await SshDockerFixture.SkipIfDockerNotAvailableAsync().ConfigureAwait(false);
         SkipIfSshAgentBinariesMissing();
 
         byte[] privKeyBytes = FixtureLoader.LoadBytes("ed25519_plain_key");
@@ -297,7 +297,7 @@ public sealed class DockerAgentTests : IDisposable
     public async Task Agent_IdentityPath_SwapBeforeConnect_RebuildsTransport()
     {
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
-        SshDockerFixture.SkipIfDockerNotAvailable();
+        await SshDockerFixture.SkipIfDockerNotAvailableAsync().ConfigureAwait(false);
         SkipIfSshAgentBinariesMissing();
 
         byte[] privKeyBytes = FixtureLoader.LoadBytes("ed25519_plain_key");
@@ -327,7 +327,7 @@ public sealed class DockerAgentTests : IDisposable
     public async Task Agent_ListIdentities_ReturnsLoadedKey()
     {
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
-        SshDockerFixture.SkipIfDockerNotAvailable();
+        await SshDockerFixture.SkipIfDockerNotAvailableAsync().ConfigureAwait(false);
         SkipIfSshAgentBinariesMissing();
 
         byte[] privKeyBytes = FixtureLoader.LoadBytes("ed25519_plain_key");
@@ -356,7 +356,7 @@ public sealed class DockerAgentTests : IDisposable
     public async Task Agent_Sign_Produces_Verifiable_Signature()
     {
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
-        SshDockerFixture.SkipIfDockerNotAvailable();
+        await SshDockerFixture.SkipIfDockerNotAvailableAsync().ConfigureAwait(false);
         SkipIfSshAgentBinariesMissing();
 
         byte[] privKeyBytes = FixtureLoader.LoadBytes("ed25519_plain_key");

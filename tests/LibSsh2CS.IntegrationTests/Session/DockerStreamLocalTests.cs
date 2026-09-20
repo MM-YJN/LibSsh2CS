@@ -44,7 +44,7 @@ namespace LibSsh2CS.IntegrationTests.Session;
 /// </para>
 /// <para>
 /// <b>Gating:</b> <see cref="SshImageFixtureBase.StartContainerAsync"/>
-/// calls <see cref="SshDockerFixture.SkipIfDockerNotAvailable"/> internally,
+/// calls <see cref="SshDockerFixture.SkipIfDockerNotAvailableAsync"/> internally,
 /// so tests skip (not fail) when Docker is not reachable.
 /// </para>
 /// </remarks>

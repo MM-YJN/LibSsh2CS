@@ -254,12 +254,13 @@ public abstract class SshImageFixtureBase(IMessageSink messageSink) : IAsyncLife
     /// <summary>
     /// Starts a fresh container from this fixture's pre-built image. The
     /// container gets a random host port mapped to port 22. Calls
-    /// <see cref="SshDockerFixture.SkipIfDockerNotAvailable"/> first, so the
-    /// test is skipped when Docker is unreachable. Prepares the image lazily.
+    /// <see cref="SshDockerFixture.SkipIfDockerNotAvailableAsync"/> first, so
+    /// the test is skipped when Docker is unreachable. Prepares the image
+    /// lazily.
     /// </summary>
     public async Task<SshDockerContainer> StartContainerAsync(ILoggerFactory loggerFactory, CancellationToken ct)
     {
-        SshDockerFixture.SkipIfDockerNotAvailable();
+        await SshDockerFixture.SkipIfDockerNotAvailableAsync().ConfigureAwait(false);
 
         IFutureDockerImage image = await EnsureImageAsync(ct).ConfigureAwait(false);
 
