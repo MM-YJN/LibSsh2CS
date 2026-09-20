@@ -1,0 +1,26 @@
+// Win32 APIs the fake Pageant window fixture calls, projected by CsWin32 (see
+// https://microsoft.github.io/CsWin32/docs/getting-started.html). The generated
+// members live on the internal Windows.Win32.PInvoke class.
+//
+// The fixture registers a window and serves WM_COPYDATA requests exactly the
+// way Pageant does, so it needs the window class, the message loop, and the
+// shared-mapping calls Pageant itself uses.
+CloseHandle
+COPYDATASTRUCT
+CreateWindowEx
+DefWindowProc
+DispatchMessage
+FILE_MAP
+GetMessage
+GetModuleHandle
+MapViewOfFile
+MSG
+OpenFileMapping
+PostQuitMessage
+RegisterClassEx
+TranslateMessage
+UnmapViewOfFile
+WM_CLOSE
+WM_COPYDATA
+WM_DESTROY
+WNDCLASSEXW

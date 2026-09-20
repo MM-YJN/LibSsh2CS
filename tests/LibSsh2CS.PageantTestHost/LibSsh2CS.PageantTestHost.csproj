@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AssemblyName>PageantTestHost</AssemblyName>
+    <RootNamespace>LibSsh2CS.PageantTestHost</RootNamespace>
+    <NoWarn>$(NoWarnForTestProjects)</NoWarn>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Generates this fixture's Windows interop from the Win32 metadata.
+         NativeMethods.txt lists the requested APIs; Directory.Build.props runs
+         the generator as a build task with runtime marshalling disabled, which
+         is what leaves the registered window class holding a real function
+         pointer for its window procedure. -->
+    <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.333" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage" />
+  </ItemGroup>
+
+</Project>

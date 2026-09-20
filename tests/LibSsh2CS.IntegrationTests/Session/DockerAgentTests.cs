@@ -219,13 +219,21 @@ public sealed class DockerAgentTests : IDisposable
 
     /// <summary>
     /// The parameterless <see cref="SshAgent()"/> constructor relies on
-    /// <see cref="AgentTransports.Create"/> to wire up a
-    /// <see cref="UnixSocketAgentTransport"/> that resolves the socket path
-    /// from <c>$SSH_AUTH_SOCK</c> at <see cref="SshAgent.ConnectAsync"/> time.
-    /// This test sets <c>SSH_AUTH_SOCK</c> to the live agent's socket and
-    /// verifies the parameterless ctor path reaches the agent successfully.
+    /// auto-discovery (<see cref="AgentTransports.ConnectAsync(CancellationToken)"/>)
+    /// to wire up a <see cref="UnixSocketAgentTransport"/> that resolves the
+    /// socket path from <c>$SSH_AUTH_SOCK</c> at
+    /// <see cref="SshAgent.ConnectAsync"/> time. This test sets
+    /// <c>SSH_AUTH_SOCK</c> to the live agent's socket and verifies the
+    /// parameterless ctor path reaches the agent successfully.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>POSIX only.</b> On Windows, auto-discovery tries Pageant before the
+    /// Unix socket, so a running Pageant would win and this test's premise
+    /// (<c>SSH_AUTH_SOCK</c> decides the backend) would no longer hold. The
+    /// Windows preference order is covered by
+    /// <c>AgentTransportsTests.GetFactories_PutsPageantFirstOnWindowsAndUnixElsewhere</c>.
+    /// </para>
     /// <para>
     /// <b>Why this is in the <c>agent-env-mutating</c> collection.</b> The test
     /// temporarily replaces <c>SSH_AUTH_SOCK</c> in the process environment.
@@ -237,8 +245,8 @@ public sealed class DockerAgentTests : IDisposable
     /// that might read the env var concurrently.
     /// </para>
     /// <para>
-    /// Lights up <see cref="SshAgent()"/> parameterless ctor,
-    /// <see cref="AgentTransports.Create()"/> factory loop, and
+    /// Lights up <see cref="SshAgent()"/> parameterless ctor, the
+    /// <see cref="AgentTransports"/> discovery loop, and
     /// <see cref="UnixSocketAgentTransport"/> parameterless ctor +
     /// <see cref="UnixSocketAgentTransport.ResolveSocketPath"/> env-var path
     /// — all currently at 0% because every other agent test passes an
@@ -249,6 +257,11 @@ public sealed class DockerAgentTests : IDisposable
     public async Task Agent_ParameterlessCtor_ResolvesAuthSockEnvVar()
     {
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Skip("Windows discovery prefers Pageant over $SSH_AUTH_SOCK; covered by the discovery tests.");
+        }
+
         SshDockerFixture.SkipIfDockerNotAvailable();
         SkipIfSshAgentBinariesMissing();
 
@@ -276,12 +289,9 @@ public sealed class DockerAgentTests : IDisposable
 
     /// <summary>
     /// Setting <see cref="SshAgent.IdentityPath"/> before
-    /// <see cref="SshAgent.ConnectAsync"/> rebuilds the underlying transport
-    /// via <see cref="AgentTransports.Create(string)"/>. This exercises the
-    /// <see cref="SshAgent.IdentityPath"/> setter's transport-swap branch
-    /// (<c>_ownsTransport</c> path), which is at 0% today because no other
-    /// test sets <see cref="SshAgent.IdentityPath"/> on an auto-discovery
-    /// <see cref="SshAgent"/>.
+    /// <see cref="SshAgent.ConnectAsync"/> pins the client to a Unix socket at
+    /// that path: the next connect builds the transport from the path instead
+    /// of running auto-discovery, so the override reaches the live agent.
     /// </summary>
     [Fact]
     public async Task Agent_IdentityPath_SwapBeforeConnect_RebuildsTransport()

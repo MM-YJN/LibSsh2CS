@@ -85,8 +85,9 @@ known-hosts verification, and channel usage.
 This is a port of portions of libssh2, with an asynchronous C# API. It does not
 provide every native libssh2 feature. SFTP and SCP clients are not implemented;
 `SubsystemAsync("sftp")` opens a subsystem channel but does not implement the
-SFTP protocol. The SSH agent transport currently supports Unix domain sockets;
-Pageant and Windows OpenSSH named-pipe backends are not implemented.
+SFTP protocol. The SSH agent transport supports Unix domain sockets on every
+platform and PuTTY Pageant on Windows; the Windows OpenSSH named-pipe backend
+is not implemented.
 
 Unit tests cover protocol behavior and cryptographic fixtures. Docker integration
 tests exercise live OpenSSH servers, including authentication, channels,
@@ -120,6 +121,17 @@ Docker-dependent tests skip when Docker is unreachable; agent tests skip when
 those binaries are missing. Report skips separately from successful integration
 validation. Fixture setup can take 10 minutes even for a single integration test;
 allow additional time for test execution.
+
+Windows agent IPC tests need no installation: they launch the `PageantTestHost`
+fixture program, which the integration test project builds and stages next to
+the test assembly, so `dotnet test --project tests/LibSsh2CS.IntegrationTests`
+runs them on its own. Tests against a real `pageant.exe` are opt-in — set
+`LIBSSH2CS_TEST_PAGEANT=1`
+(and optionally `LIBSSH2CS_PAGEANT_PATH`) only on a machine or session where no
+agent is already running. Pageant treats an agent that is running anywhere in
+the session as "already running" and would load keys into it rather than
+starting an isolated instance, so those tests refuse to run when one is
+present.
 
 Run just the unit suite after building:
 

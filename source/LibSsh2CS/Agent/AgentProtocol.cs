@@ -18,8 +18,9 @@ namespace LibSsh2CS.Agent;
 /// response is <c>[4-byte BE length][payload]</c> where the first byte of the
 /// payload is the message-type byte. This file holds only the message-type
 /// constants and pure parsers; the actual byte transport lives in
-/// <see cref="IAgentTransport"/> implementations (Unix socket now; Pageant
-/// and Windows OpenSSH named-pipe backends deferred).
+/// <see cref="IAgentTransport"/> implementations (<see cref="UnixSocketAgentTransport"/>
+/// and <see cref="PageantAgentTransport"/>), which frame each payload with the
+/// same 4-byte length prefix.
 /// </para>
 /// <para>
 /// <b>Constant values are <c>internal</c> not <c>public</c></b> — the agent is

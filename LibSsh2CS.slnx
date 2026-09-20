@@ -3,6 +3,7 @@
     <Project Path="source/LibSsh2CS/LibSsh2CS.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/LibSsh2CS.PageantTestHost/LibSsh2CS.PageantTestHost.csproj" />
     <Project Path="tests/LibSsh2CS.UnitTests/LibSsh2CS.UnitTests.csproj" />
     <Project Path="tests/LibSsh2CS.IntegrationTests/LibSsh2CS.IntegrationTests.csproj" />
   </Folder>

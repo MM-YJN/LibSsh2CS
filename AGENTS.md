@@ -15,6 +15,13 @@ compatibility scope before changing SSH behavior.
   fixture generation scripts.
 - `tests/LibSsh2CS.IntegrationTests/`: xUnit v3 Docker-based OpenSSH integration
   tests and embedded fixtures.
+- `NativeMethods.txt`: CsWin32 input in `source/LibSsh2CS/`,
+  `tests/LibSsh2CS.PageantTestHost/`, and `tests/LibSsh2CS.IntegrationTests/`.
+  It lists the Win32 APIs each project may call; the declarations themselves
+  are generated at build time. `tests/LibSsh2CS.IntegrationTests/NativeMethods.json`
+  holds the one generator setting that cannot live in `Directory.Build.props`: a
+  `className` of its own, because `InternalsVisibleTo` exposes the library's
+  identically named generated types.
 - `source/LibSsh2CS/README.md`: library usage guide and NuGet package readme;
   the root `README.md` introduces the project, compatibility, and prerequisites.
 - `Directory.Build.props`: shared build, analyzer, and versioning settings.
@@ -73,6 +80,15 @@ checks performed and any checks that could not run.
   the task.
 - Preserve the asynchronous SSH API, AOT compatibility, and independence from
   LibGit2CS and the native libssh2 library.
+- Do not hand-write `DllImport` or `LibraryImport` declarations for Windows
+  APIs. CsWin32 generates them from the Win32 metadata: add the API (or the enum
+  that declares a constant) to the project's `NativeMethods.txt`. The generator
+  runs as a build task (`CsWin32RunAsBuildTask`) and the repository disables
+  runtime marshalling (`DisableRuntimeMarshalling`), both set in
+  `Directory.Build.props`, so every generated entry point is a blittable
+  `LibraryImport` that keeps the library NativeAOT- and trim-compatible. The
+  generated code is written to `obj/`; see `PageantWindowChannel` for how a
+  Windows-only type is annotated and called.
 - Preserve caller ownership of session transports and explicit host-key trust
   verification. Keep documented compatibility limits accurate; opening an SFTP
   subsystem channel does not implement the SFTP protocol.
