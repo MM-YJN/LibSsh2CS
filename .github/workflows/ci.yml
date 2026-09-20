@@ -58,36 +58,6 @@ jobs:
             --coverlet-include '[LibSsh2CS]*' \
             --report-xunit-trx
 
-      - name: Generate combined coverage report
-        id: coverage
-        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
-        run: |
-          # Both suites must contribute; never silently report partial coverage.
-          test "$(find artifacts/coverage -maxdepth 1 -name '*.cobertura.*.xml' | wc -l)" -eq 2
-          dotnet tool restore
-          dotnet reportgenerator \
-            '-reports:./artifacts/coverage/*.cobertura.*.xml' \
-            '-targetdir:./artifacts/coverage/report' \
-            '-assemblyfilters:+LibSsh2CS' \
-            '-reporttypes:Html;MarkdownSummary;Cobertura'
-
-      - name: Enforce coverage thresholds
-        if: ${{ !cancelled() && steps.coverage.outcome == 'success' }}
-        run: |
-          python3 .github/scripts/check_coverage.py artifacts/coverage/report \
-            --line-threshold 90 --branch-threshold 80
-
-      - name: Summarize Linux test results
-        if: ${{ !cancelled() && hashFiles('artifacts/coverage/**/*.trx') != '' }}
-        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3.0.0
-        with:
-          name: Tests - Linux
-          report-title: Tests - Linux
-          path: artifacts/coverage/**/*.trx
-          reporter: dotnet-trx
-          use-actions-summary: 'true'
-          list-tests: failed
-
       - name: Upload Linux coverage and test results
         if: ${{ !cancelled() && hashFiles('artifacts/coverage/**') != '' }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -132,25 +102,16 @@ jobs:
           }
           "LIBSSH2CS_PAGEANT_PATH=$pageantPath" >> $env:GITHUB_ENV
 
-      - name: Run full solution tests
+      - name: Run tests with coverage
         env:
           LIBSSH2CS_TEST_PAGEANT: '1'
         run: >-
           dotnet test --solution LibSsh2CS.slnx -c Release --no-build
-          --results-directory ./artifacts/windows-tests -- --report-xunit-trx
+          --results-directory ./artifacts/windows-tests --
+          --coverlet --coverlet-output-format cobertura
+          --coverlet-include '[LibSsh2CS]*' --report-xunit-trx
 
-      - name: Summarize Windows test results
-        if: ${{ !cancelled() && hashFiles('artifacts/windows-tests/**/*.trx') != '' }}
-        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3.0.0
-        with:
-          name: Tests - Windows
-          report-title: Tests - Windows
-          path: artifacts/windows-tests/**/*.trx
-          reporter: dotnet-trx
-          use-actions-summary: 'true'
-          list-tests: failed
-
-      - name: Upload Windows test results
+      - name: Upload Windows coverage and test results
         if: ${{ always() && hashFiles('artifacts/windows-tests/**') != '' }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:

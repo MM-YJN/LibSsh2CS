@@ -104,8 +104,11 @@ Separate prose API guides are pending.
 ## Development
 
 Development includes unit tests and integration tests against live SSH servers.
-[CI](.github/workflows/ci.yml) validates changes on Linux and Windows and publishes
-test results and coverage reports in GitHub Actions.
+[CI](.github/workflows/ci.yml) validates changes on Linux and Windows and uploads
+raw test and coverage results. [Test Report](.github/workflows/test-report.yml)
+publishes test summaries, combines coverage reports, and enforces the 90% line
+and 80% branch coverage thresholds. Its `Coverage` check targets the commit tested
+by CI; require this check in branch protection to gate merges on coverage.
 
 See [AGENTS.md](AGENTS.md) for setup, build and test commands, repository
 conventions, and contribution guidance.

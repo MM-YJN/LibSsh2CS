@@ -5,12 +5,11 @@ on:
     workflows: [CI]
     types: [completed]
 
-# Fork PRs cannot create checks from CI's read-only token. This workflow only
-# parses artifacts; it does not check out or execute code from the tested PR.
+# Reports consume artifacts from the triggering CI run. Coverage tooling comes
+# from the trusted default-branch revision; never execute code from the tested PR.
 permissions:
   contents: read
   actions: read
-  checks: write
 
 jobs:
   report:
@@ -26,12 +25,101 @@ jobs:
           - os: Windows
             artifact: windows-test-results
     steps:
-      - name: Publish ${{ matrix.os }} test check
+      - name: Summarize ${{ matrix.os }} tests
         uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3.0.0
         with:
           artifact: ${{ matrix.artifact }}
           name: Tests - ${{ matrix.os }}
+          report-title: Tests - ${{ matrix.os }}
           path: '**/*.trx'
           reporter: dotnet-trx
-          use-actions-summary: 'false'
+          use-actions-summary: 'true'
           list-tests: failed
+
+  coverage:
+    if: ${{ github.event.workflow_run.conclusion != 'cancelled' }}
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out trusted reporting tools
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          global-json-file: global.json
+
+      - name: Download Linux results
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+          name: linux-test-results
+          path: artifacts/coverage-input/linux
+
+      - name: Download Windows results
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+          name: windows-test-results
+          path: artifacts/coverage-input/windows
+
+      - name: Generate combined coverage report
+        id: coverage
+        run: |
+          # Require both suites from each OS; never gate partial coverage.
+          for platform in linux windows; do
+            test "$(find "artifacts/coverage-input/$platform" -maxdepth 1 -name '*.cobertura.*.xml' | wc -l)" -eq 2
+          done
+          dotnet tool restore
+          dotnet reportgenerator \
+            '-reports:./artifacts/coverage-input/**/*.cobertura.*.xml' \
+            '-targetdir:./artifacts/coverage-combined' \
+            '-sourcedirs:./source/LibSsh2CS' \
+            '-assemblyfilters:+LibSsh2CS' \
+            '-reporttypes:Html;MarkdownSummaryGithub;Cobertura'
+
+      - name: Enforce combined coverage thresholds
+        if: ${{ !cancelled() && steps.coverage.outcome == 'success' }}
+        run: |
+          python3 .github/scripts/check_coverage.py artifacts/coverage-combined \
+            --line-threshold 90 --branch-threshold 80
+
+      - name: Publish detailed coverage summary
+        if: ${{ !cancelled() && steps.coverage.outcome == 'success' }}
+        run: cat artifacts/coverage-combined/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload combined coverage report
+        if: ${{ !cancelled() && steps.coverage.outcome == 'success' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: combined-coverage
+          path: artifacts/coverage-combined/
+          retention-days: 14
+          if-no-files-found: error
+
+      # workflow_run jobs belong to the default branch. Attach the coverage
+      # outcome explicitly to the commit tested by CI for PR status checks.
+      - name: Publish coverage check
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          CONCLUSION: ${{ job.status }}
+        run: |
+          jq -n \
+            --arg sha "$TESTED_SHA" \
+            --arg conclusion "$CONCLUSION" \
+            --arg url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            '{name: "Coverage", head_sha: $sha, status: "completed", conclusion: $conclusion,
+              details_url: $url, output: {title: "Combined coverage",
+              summary: "See Test Report for coverage thresholds, the summary, and the HTML artifact."}}' \
+            | gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" --input -
