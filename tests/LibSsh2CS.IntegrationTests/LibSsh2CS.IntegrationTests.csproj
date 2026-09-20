@@ -29,10 +29,12 @@
       Build dependency only: PageantTestHost is an independent fixture process
       that deliberately does not reference the library, so it is staged next to
       the test output by the StagePageantTestHost target below instead of being
-      referenced as an assembly.
+      referenced as an assembly. Private=false also prevents the SDK from copying
+      the apphost to the test output root, where its Linux filename would collide
+      with the staging directory.
     -->
     <ProjectReference Include="..\LibSsh2CS.PageantTestHost\LibSsh2CS.PageantTestHost.csproj"
-                      ReferenceOutputAssembly="false" />
+                      ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
   <ItemGroup>

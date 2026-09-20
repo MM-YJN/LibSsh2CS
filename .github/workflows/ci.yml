@@ -56,7 +56,7 @@ jobs:
             --results-directory ./artifacts/coverage -- \
             --coverlet --coverlet-output-format cobertura \
             --coverlet-include '[LibSsh2CS]*' \
-            --report-xunit-trx --fail-skips on
+            --report-xunit-trx
 
       - name: Generate combined coverage report
         id: coverage
@@ -83,5 +83,56 @@ jobs:
         with:
           name: coverage-and-test-results
           path: artifacts/coverage/
+          retention-days: 14
+          if-no-files-found: error
+
+  windows-tests:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Restore packages
+        run: dotnet restore LibSsh2CS.slnx --locked-mode
+
+      - name: Build Release
+        run: dotnet build LibSsh2CS.slnx -c Release --no-restore -p:ContinuousIntegrationBuild=true
+
+      - name: Download and verify Pageant 0.85
+        shell: pwsh
+        run: |
+          $pageantPath = Join-Path $env:RUNNER_TEMP 'pageant.exe'
+          Invoke-WebRequest 'https://the.earth.li/~sgtatham/putty/0.85/w64/pageant.exe' -OutFile $pageantPath
+          # Official standalone w64 checksum: https://the.earth.li/~sgtatham/putty/0.85/sha256sums
+          $expectedHash = '3bd76b57fcd09acc948268c753ea2077b0c557ca435323301a9b572661f98ecd'
+          if ((Get-FileHash $pageantPath -Algorithm SHA256).Hash -ne $expectedHash) {
+            throw 'Pageant SHA-256 checksum mismatch.'
+          }
+          "LIBSSH2CS_PAGEANT_PATH=$pageantPath" >> $env:GITHUB_ENV
+
+      - name: Run full solution tests
+        env:
+          LIBSSH2CS_TEST_PAGEANT: '1'
+        run: >-
+          dotnet test --solution LibSsh2CS.slnx -c Release --no-build
+          --results-directory ./artifacts/windows-tests -- --report-xunit-trx
+
+      - name: Upload Windows test results
+        if: ${{ always() && hashFiles('artifacts/windows-tests/**') != '' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: windows-test-results
+          path: artifacts/windows-tests/
           retention-days: 14
           if-no-files-found: error

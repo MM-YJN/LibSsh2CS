@@ -55,6 +55,11 @@ public class PageantCompatibilityTests
     [Fact]
     public async Task RealPageant_FreshInstance_IsDiscoveredAndServesRequests()
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Skip("Real Pageant requires Windows.");
+        }
+
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         if (!IsEnabled())
         {
@@ -62,7 +67,6 @@ public class PageantCompatibilityTests
         }
 
         // Enabled: every prerequisite problem below is a hard failure.
-        Assert.True(OperatingSystem.IsWindows(), $"{EnableVariable} is set, but these tests require Windows.");
 
         string executable = ResolvePageantExecutable();
         AssertAgentNotAlreadyRunning();
