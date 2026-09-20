@@ -47,7 +47,19 @@ public sealed class DockerPrerequisiteTests
     private static ProcessStartInfo CreateShellStartInfo(string command)
     {
         return OperatingSystem.IsWindows()
-            ? new ProcessStartInfo("cmd.exe") { ArgumentList = { "/c", command } }
-            : new ProcessStartInfo("/bin/sh") { ArgumentList = { "-c", command } };
+            ? new ProcessStartInfo("cmd.exe")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                ArgumentList = { "/c", command },
+            }
+            : new ProcessStartInfo("/bin/sh")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                ArgumentList = { "-c", command },
+            };
     }
 }
