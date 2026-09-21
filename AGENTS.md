@@ -95,8 +95,12 @@ checks performed and any checks that could not run.
 - Add regression coverage for behavior fixes, especially packet framing,
   authentication, key exchange, channel handling, and cancellation. Use the
   cryptographic fixtures and live OpenSSH integration tests as appropriate.
-- Update the relevant readmes when public behavior changes. Keep dependency
-  changes intentional. Whenever any dependency or the .NET SDK version changes,
+- Update the relevant readmes only when a change makes existing documentation
+  inaccurate or introduces public functionality that needs usage documentation.
+  Internal refactoring, test-only changes, and fixes that restore documented
+  behavior do not require README changes.
+- Keep dependency changes intentional. Whenever any dependency or the .NET SDK
+  version changes,
   run `dotnet restore LibSsh2CS.slnx --force-evaluate` to regenerate all solution
   package lock files. Review and include the resulting `packages.lock.json`
   changes with the dependency or SDK change. Avoid unrelated formatting or
