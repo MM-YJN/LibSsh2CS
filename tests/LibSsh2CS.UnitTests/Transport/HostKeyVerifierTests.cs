@@ -103,7 +103,7 @@ public class HostKeyVerifierTests
         // R = B, S = 1 satisfies the old equation for A = identity for every message.
         Convert.FromHexString("5866666666666666666666666666666666666666666666666666666666666666").CopyTo(signature, 0);
         signature[32] = 1;
-        Assert.False(HostKeyVerifier.Verify(BuildSigBlob("ssh-ed25519", identity), [42],
+        Assert.False(HostKeyVerifier.Verify(BuildSigBlob("ssh-ed25519", identity), new byte[] { 42 },
             BuildSigBlob("ssh-ed25519", signature), SshHostKeyType.Ed25519));
     }
 

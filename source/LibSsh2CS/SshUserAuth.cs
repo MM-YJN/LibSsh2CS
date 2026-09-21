@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using System.IO.Pipelines;
 using System.Text;
 
 using LibSsh2CS.Transport;
@@ -11,7 +12,7 @@ namespace LibSsh2CS;
 /// SSH-2 user authentication methods. All methods are extension methods on
 /// <see cref="SshSession"/> (mirroring the libssh2 API where auth functions take
 /// a <c>LIBSSH2_SESSION *</c>). The session must have completed
-/// <see cref="SshSession.HandshakeAsync(System.IO.Pipelines.IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/> before any auth method is called.
+/// <see cref="SshSession.HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/> before any auth method is called.
 /// </summary>
 /// <remarks>
 /// <para>

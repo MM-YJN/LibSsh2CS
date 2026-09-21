@@ -1,7 +1,7 @@
 namespace LibSsh2CS;
 
 /// <summary>
-/// Outcome of <see cref="SshKnownHosts.Check(string, int, byte[], SshKnownHostKeyType, SshKnownHostFormat)"/>.
+/// Outcome of <see cref="SshKnownHosts.Check(string, int, ReadOnlyMemory{byte}, SshKnownHostKeyType, SshKnownHostFormat)"/>.
 /// Mirrors <c>LIBSSH2_KNOWNHOST_CHECK_*</c> at <c>libssh2.h:1218-1221</c>.
 /// Numeric values are the C constants verbatim so that callers asserting on
 /// specific codes see identical values.

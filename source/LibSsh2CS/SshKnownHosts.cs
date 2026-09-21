@@ -280,13 +280,12 @@ public sealed class SshKnownHosts : IDisposable
     public SshKnownHostCheckResult Check(
         string host,
         int port,
-        byte[] key,
+        ReadOnlyMemory<byte> key,
         SshKnownHostKeyType keyType,
         SshKnownHostFormat inputFormat = SshKnownHostFormat.Plain)
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(host);
-        ArgumentNullException.ThrowIfNull(key);
 
         // Parity with knownhost.c:367-369 — SHA1 input is unsupported (a hashed
         // input cannot be matched against either hashed or plaintext entries).
@@ -297,7 +296,7 @@ public sealed class SshKnownHosts : IDisposable
 
         // Encode the raw key once for string comparison against stored entries.
         // Parity with knownhost.c:389-402 (the KEYENC_RAW branch).
-        string base64Key = Base64.EncodeToString(key);
+        string base64Key = Base64.EncodeToString(key.Span);
 
         // Build the host forms to check, in C's order: [host]:port first, then
         // plain host. port < 0 collapses to plain-host-only (numcheck == 1).
@@ -345,7 +344,10 @@ public sealed class SshKnownHosts : IDisposable
         byte[] key,
         SshKnownHostKeyType keyType,
         SshKnownHostFormat inputFormat = SshKnownHostFormat.Plain)
-        => Check(host, -1, key, keyType, inputFormat);
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return Check(host, -1, key, keyType, inputFormat);
+    }
 
     /// <summary>
     /// Parses a single OpenSSH known_hosts line and adds the entry (or entries)

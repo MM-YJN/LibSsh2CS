@@ -732,7 +732,7 @@ internal static class KeyExchange
         string serverBanner,
         ReadOnlyMemory<byte> clientKexInit,
         ReadOnlyMemory<byte> serverKexInit,
-        Func<byte[], byte[], byte[], CancellationToken, Task<bool>>? verifyAsync = null,
+        Func<ReadOnlyMemory<byte>, ReadOnlyMemory<byte>, ReadOnlyMemory<byte>, CancellationToken, Task<bool>>? verifyAsync = null,
         byte[]? existingSessionId = null,
         CancellationToken cancellationToken = default)
     {

@@ -72,7 +72,7 @@ internal static class HostKeyVerifier
     /// <returns><c>true</c> if the signature is valid; <c>false</c> on any parse
     /// failure, type mismatch, or failed verify (mirrors libssh2's <c>-1</c> →
     /// <c>false</c> collapse; the caller raises <c>KeyExchangeFailure</c>).</returns>
-    public static bool Verify(byte[] hostKey, byte[] exchangeHash, byte[] sigBlob, SshHostKeyType type)
+    public static bool Verify(ReadOnlyMemory<byte> hostKey, ReadOnlyMemory<byte> exchangeHash, ReadOnlyMemory<byte> sigBlob, SshHostKeyType type)
     {
         // All parse/verify failures collapse to false; the caller (RunExchangeAsync's
         // verify callback) raises KeyExchangeFailure. This mirrors libssh2, where a
@@ -109,7 +109,7 @@ internal static class HostKeyVerifier
     // RSA: ssh-rsa (SHA-1) / rsa-sha2-256 / rsa-sha2-512
     // ════════════════════════════════════════════════════════════════════════
 
-    private static bool VerifyRsa(byte[] hostKey, byte[] exchangeHash, byte[] sigBlob, SshHostKeyType type)
+    private static bool VerifyRsa(ReadOnlyMemory<byte> hostKey, ReadOnlyMemory<byte> exchangeHash, ReadOnlyMemory<byte> sigBlob, SshHostKeyType type)
     {
         if (!TryReadSigBody(sigBlob, type, out byte[] rsaSig))
         {
@@ -133,7 +133,7 @@ internal static class HostKeyVerifier
         // digest + the algorithm name (for the DigestInfo OID) — equivalent to
         // RSA_verify(nid, hash, ...).
         HashAlgorithmName hash = RsaHash(type);
-        byte[] digest = HashData(hash, exchangeHash);
+        byte[] digest = HashData(hash, exchangeHash.Span);
         using var rsa = RSA.Create();
         rsa.ImportParameters(new RSAParameters { Exponent = e, Modulus = n });
         return rsa.VerifyHash(digest, rsaSig, hash, RSASignaturePadding.Pkcs1);
@@ -154,7 +154,7 @@ internal static class HostKeyVerifier
     // ECDSA: ecdsa-sha2-nistp256/384/521
     // ════════════════════════════════════════════════════════════════════════
 
-    private static bool VerifyEcdsa(byte[] hostKey, byte[] exchangeHash, byte[] sigBlob, SshHostKeyType type)
+    private static bool VerifyEcdsa(ReadOnlyMemory<byte> hostKey, ReadOnlyMemory<byte> exchangeHash, ReadOnlyMemory<byte> sigBlob, SshHostKeyType type)
     {
         if (!TryReadSigBody(sigBlob, type, out byte[] body))
         {
@@ -194,7 +194,7 @@ internal static class HostKeyVerifier
         // DER signature. BCL ECDsa's 2-arg VerifyHash is platform-dependent (P1363 on
         // Linux, DER historically elsewhere), so use the explicit format overload with
         // the DER (Rfc3279DerSequence) we built — matching OpenSSL's native ECDSA_do_verify.
-        byte[] digest = HashData(hash, exchangeHash);
+        byte[] digest = HashData(hash, exchangeHash.Span);
         using var ecdsa = ECDsa.Create();
         ecdsa.ImportParameters(new ECParameters { Curve = curve, Q = q });
         return ecdsa.VerifyHash(digest, der, DSASignatureFormat.Rfc3279DerSequence);
@@ -213,7 +213,7 @@ internal static class HostKeyVerifier
     // Ed25519: ssh-ed25519
     // ════════════════════════════════════════════════════════════════════════
 
-    private static bool VerifyEd25519(byte[] hostKey, byte[] exchangeHash, byte[] sigBlob)
+    private static bool VerifyEd25519(ReadOnlyMemory<byte> hostKey, ReadOnlyMemory<byte> exchangeHash, ReadOnlyMemory<byte> sigBlob)
     {
         if (!TryReadSigBody(sigBlob, SshHostKeyType.Ed25519, out byte[] edSig)
             || edSig.Length != Ed25519SigLen)
@@ -238,7 +238,7 @@ internal static class HostKeyVerifier
         // _libssh2_ed25519_verify verifies over the raw message m (=H); Ed25519's
         // internal SHA-512 applies. Our in-port Ed25519.Verify is the line-for-line
         // RFC 8032 §6 reference.
-        return Ed25519.Verify(pub, exchangeHash, edSig);
+        return Ed25519.Verify(pub, exchangeHash.Span, edSig);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -250,7 +250,7 @@ internal static class HostKeyVerifier
     /// validates the embedded name against the negotiated <paramref name="type"/>,
     /// and returns the sig body. Returns false on truncation or name mismatch.
     /// </summary>
-    private static bool TryReadSigBody(byte[] sigBlob, SshHostKeyType type, out byte[] body)
+    private static bool TryReadSigBody(ReadOnlyMemory<byte> sigBlob, SshHostKeyType type, out byte[] body)
     {
         body = Array.Empty<byte>();
         var r = new PacketWireReader(new ReadOnlySequence<byte>(sigBlob));
@@ -282,7 +282,7 @@ internal static class HostKeyVerifier
     /// in <c>_libssh2_rsa_sha2_verify</c> / <c>_libssh2_ecdsa_verify</c>.
     /// </summary>
     [SuppressMessage("Security", "CA5350:Do not use insecure cryptographic algorithms", Justification = "ssh-rsa (SHA-1) is a deprecated-but-supported host-key algorithm kept for parity with libssh2 (LIBSSH2_RSA_SHA1); OpenSSH 8.2+ disables it by default. The SHA1 use here is hostkey-signature verification only.")]
-    private static byte[] HashData(HashAlgorithmName name, byte[] data)
+    private static byte[] HashData(HashAlgorithmName name, ReadOnlySpan<byte> data)
     {
         if (name == HashAlgorithmName.SHA1)
         {

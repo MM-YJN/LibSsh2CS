@@ -21,9 +21,9 @@ namespace LibSsh2CS;
 /// <para>
 /// <b>Lifecycle.</b> Construct with <see cref="SshSession()"/>; configure
 /// preferences / flags via the indexer / <see cref="SetFlag"/>; call
-/// <see cref="HandshakeAsync(IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/>
+/// <see cref="HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/>
 /// (or the
-/// <see cref="HandshakeAsync(Stream, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/>
+/// <see cref="HandshakeAsync(Stream, HostKeyVerificationCallback, CancellationToken)"/>
 /// convenience overload) to run banner exchange → KEXINIT → KEX → NEWKEYS → SERVICE_REQUEST. The
 /// caller owns the underlying transport (socket / <see cref="System.Net.Sockets.NetworkStream"/>);
 /// the session does NOT dispose it. <see cref="DisposeAsync"/> sends
@@ -37,7 +37,7 @@ namespace LibSsh2CS;
 /// and the KEX orchestration that delegates to <see cref="KeyExchange.RunExchangeAsync"/>.
 /// The C <c>session_startup</c> state machine (idle → created → sent → sent1 →
 /// sent2 → sent3 → sent4 → idle) collapses to local variables inside
-/// <see cref="HandshakeAsync(IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/>'s async body — the compiler's state machine
+/// <see cref="HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/>'s async body — the compiler's state machine
 /// replaces libssh2's hand-rolled one.
 /// </para>
 /// <para>
@@ -50,13 +50,13 @@ namespace LibSsh2CS;
 /// </para>
 /// <para>
 /// <b>EXT_INFO surfacing</b> (RFC 8308): <see cref="PacketQueue"/> stashes
-/// <c>SSH_MSG_EXT_INFO</c> (type 7) during KEX. <see cref="HandshakeAsync(IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/>
+/// <c>SSH_MSG_EXT_INFO</c> (type 7) during KEX. <see cref="HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/>
 /// retrieves it post-KEX and parses <c>server-sig-algs</c> into
 /// <see cref="ServerSignatureAlgorithms"/> for <see cref="SshUserAuth"/>'s RSA-SHA2
 /// selection (parity with <c>userauth.c:1351</c> <c>_libssh2_key_sign_algorithm</c>).
 /// </para>
 /// <para>
-/// <b>Hostkey verification.</b> <see cref="HandshakeAsync(IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/> requires a non-null
+/// <b>Hostkey verification.</b> <see cref="HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/> requires a non-null
 /// <c>verifyHostKeyAsync</c> callback
 /// (<c>(hostKey, exchangeHash, cancellationToken) → bool</c>) wired into
 /// <see cref="KeyExchange.RunExchangeAsync"/>'s verify seam for initial host trust.
@@ -165,7 +165,7 @@ public sealed class SshSession : IAsyncDisposable
     // ── Public properties ──────────────────────────────────────────────────
 
     /// <summary>
-    /// The raw server host-key blob, available after <see cref="HandshakeAsync(IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/>
+    /// The raw server host-key blob, available after <see cref="HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/>
     /// completes. Returns an empty value before handshake (a completed
     /// handshake always yields a non-empty <c>K_S</c>).
     /// </summary>
@@ -223,7 +223,7 @@ public sealed class SshSession : IAsyncDisposable
     /// Sets <see cref="ServerSignatureAlgorithms"/> directly. Internal — used by
     /// tests to exercise RSA-SHA2 selection without running a full handshake
     /// against a real server (the value is normally populated from EXT_INFO by
-    /// <see cref="HandshakeAsync(IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/>).
+    /// <see cref="HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/>).
     /// </summary>
     internal void SetServerSignatureAlgorithmsForTest(string[]? algs)
         => SetServerSignatureAlgorithms(algs);
@@ -240,7 +240,7 @@ public sealed class SshSession : IAsyncDisposable
 
     /// <summary>
     /// Sets the outbound packet writer directly, bypassing the
-    /// <see cref="HandshakeAsync(IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/>
+    /// <see cref="HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/>
     /// path. Internal — used by keepalive
     /// tests to drive <see cref="SendKeepAliveAsync"/> against a cleartext pipe
     /// without running a full KEX. Mirrors the <c>ChannelTestHarness</c>
@@ -250,7 +250,7 @@ public sealed class SshSession : IAsyncDisposable
 
     /// <summary>
     /// Sets the channel router directly, bypassing the
-    /// <see cref="HandshakeAsync(IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/> path. Internal — used by tests to
+    /// <see cref="HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/> path. Internal — used by tests to
     /// drive <see cref="SendGlobalRequestAsync"/> against a cleartext pipe
     /// without running a full KEX.
     /// </summary>
@@ -443,7 +443,7 @@ public sealed class SshSession : IAsyncDisposable
 
     /// <summary>
     /// Sets a session behavioral flag. <see cref="SshFlag.Compress"/> must be
-    /// set before <see cref="HandshakeAsync(IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/> to take effect (it filters the
+    /// set before <see cref="HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/> to take effect (it filters the
     /// client's compression name-list in KEXINIT). Mirrors
     /// <c>libssh2_session_flag</c>.
     /// </summary>
@@ -469,7 +469,7 @@ public sealed class SshSession : IAsyncDisposable
     /// (OpenSSH's 4 GB / 2³¹ packets / 1 hour). Set to <see cref="RekeyPolicy.Never"/>
     /// to disable auto-trigger and rely solely on server-initiated rekey (which
     /// the queue handles inline via the <c>SSH_MSG_KEXINIT</c> path). Set BEFORE
-    /// <see cref="HandshakeAsync(IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/>; changes after handshake are ignored by the
+    /// <see cref="HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/>; changes after handshake are ignored by the
     /// auto-trigger (the router captures the value at handshake completion).
     /// </summary>
     public RekeyPolicy RekeyPolicy
@@ -534,7 +534,7 @@ public sealed class SshSession : IAsyncDisposable
     /// called before handshake.
     /// </summary>
     /// <exception cref="InvalidOperationException">Thrown if called before
-    /// <see cref="HandshakeAsync(IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/> completes.</exception>
+    /// <see cref="HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/> completes.</exception>
     public string HostKeyHash(SshHostKeyHashType type)
     {
         if (_hostKey is null)
@@ -582,7 +582,7 @@ public sealed class SshSession : IAsyncDisposable
     /// <exception cref="ArgumentNullException">The transport or trust callback is null.</exception>
     public async Task HandshakeAsync(
         IDuplexPipe transport,
-        Func<byte[], byte[], CancellationToken, Task<bool>> verifyHostKeyAsync,
+        HostKeyVerificationCallback verifyHostKeyAsync,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(verifyHostKeyAsync);
@@ -644,12 +644,12 @@ public sealed class SshSession : IAsyncDisposable
 
     /// <summary>
     /// The handshake body (banner exchange → KEXINIT → KEX → SERVICE_REQUEST),
-    /// invoked by <see cref="HandshakeAsync(IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/>
+    /// invoked by <see cref="HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/>
     /// under its re-entry guard.
     /// </summary>
     private async Task HandshakeCoreAsync(
         IDuplexPipe transport,
-        Func<byte[], byte[], CancellationToken, Task<bool>> verifyHostKeyAsync,
+        HostKeyVerificationCallback verifyHostKeyAsync,
         CancellationToken cancellationToken)
     {
         _writer = new PacketWriter(transport.Output);
@@ -727,7 +727,7 @@ public sealed class SshSession : IAsyncDisposable
         // parity with libgit2's check_certificate running after libssh2's
         // internal sig_verify. The signature was previously dropped at this
         // boundary, so production never verified it.
-        async Task<bool> VerifyExchangeSignatureAsync(byte[] hostKey, byte[] h, byte[] sig, CancellationToken ct)
+        async Task<bool> VerifyExchangeSignatureAsync(ReadOnlyMemory<byte> hostKey, ReadOnlyMemory<byte> h, ReadOnlyMemory<byte> sig, CancellationToken ct)
         {
             if (!HostKeyVerifier.Verify(hostKey, h, sig, _negotiated!.HostKey))
             {
@@ -739,7 +739,7 @@ public sealed class SshSession : IAsyncDisposable
             // host key / session id. A callback that mutates its arguments must
             // not be able to corrupt that state (the same reason libssh2
             // recomputes its hashes from an owned copy).
-            return await verifyHostKeyAsync((byte[])hostKey.Clone(), (byte[])h.Clone(), ct).ConfigureAwait(false);
+            return await verifyHostKeyAsync(hostKey.ToArray(), h.ToArray(), ct).ConfigureAwait(false);
         }
 
         // ── 4. SERVICE_REQUEST "ssh-userauth" (session.c:797-858) ──────────
@@ -804,7 +804,7 @@ public sealed class SshSession : IAsyncDisposable
     /// <exception cref="ArgumentNullException">The stream or trust callback is null.</exception>
     public Task HandshakeAsync(
         Stream stream,
-        Func<byte[], byte[], CancellationToken, Task<bool>> verifyHostKeyAsync,
+        HostKeyVerificationCallback verifyHostKeyAsync,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(verifyHostKeyAsync);
@@ -821,7 +821,7 @@ public sealed class SshSession : IAsyncDisposable
     /// </summary>
     /// <param name="cancellationToken">Cooperative cancellation.</param>
     /// <exception cref="InvalidOperationException">Thrown if called before
-    /// <see cref="HandshakeAsync(IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/> completes.</exception>
+    /// <see cref="HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/> completes.</exception>
     public async Task RekeyAsync(CancellationToken cancellationToken = default)
     {
         if (_writer is null || _queue is null || _negotiated is null || _sessionId is null)
@@ -915,7 +915,7 @@ public sealed class SshSession : IAsyncDisposable
     /// it.
     /// </summary>
     /// <exception cref="InvalidOperationException">Thrown if called before
-    /// <see cref="HandshakeAsync(IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/> completes.</exception>
+    /// <see cref="HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/> completes.</exception>
     /// <exception cref="SshException">Thrown with
     /// <see cref="SshErrorCode.ChannelFailure"/> if the server rejects the open
     /// (parity <c>channel.c:285-310</c>).</exception>
@@ -1144,7 +1144,7 @@ public sealed class SshSession : IAsyncDisposable
     /// <returns>The number of seconds until the next keepalive send is due
     /// (see remarks for the three cases).</returns>
     /// <exception cref="InvalidOperationException">Thrown if called before
-    /// <see cref="HandshakeAsync(IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/> completes.</exception>
+    /// <see cref="HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/> completes.</exception>
     /// <exception cref="SshException">Thrown with
     /// <see cref="SshErrorCode.SocketSend"/> if the underlying transport send
     /// fails. (libssh2 silently ignores EAGAIN; in C# the await blocks instead
@@ -1217,7 +1217,7 @@ public sealed class SshSession : IAsyncDisposable
     /// which owns the single-slot reply machinery.
     /// </summary>
     /// <exception cref="InvalidOperationException">Thrown if called before
-    /// <see cref="HandshakeAsync(IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/> completes.</exception>
+    /// <see cref="HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/> completes.</exception>
     /// <exception cref="SshException">Thrown with
     /// <see cref="SshErrorCode.RequestDenied"/> when the server returns
     /// <c>REQUEST_FAILURE</c> and <paramref name="wantReply"/> was true.</exception>

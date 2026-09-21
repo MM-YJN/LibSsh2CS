@@ -1,4 +1,5 @@
 using System.IO.Pipelines;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 
 using LibSsh2CS.Transport;
@@ -166,8 +167,8 @@ public class HostTrustTests
             (key, hash, _) =>
             {
                 // Mutate every byte the callback was handed.
-                key.AsSpan().Fill(0xAA);
-                hash.AsSpan().Fill(0xBB);
+                MemoryMarshal.AsMemory(key).Span.Fill(0xAA);
+                MemoryMarshal.AsMemory(hash).Span.Fill(0xBB);
                 return Task.FromResult(true);
             }, ct);
         await server;

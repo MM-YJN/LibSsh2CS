@@ -32,7 +32,7 @@ namespace LibSsh2CS.Crypto;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Both <see cref="Verify(byte[], byte[], byte[])"/> and <see cref="Sign(byte[], byte[])"/>
+/// Both <see cref="Verify(ReadOnlySpan{byte}, ReadOnlySpan{byte}, ReadOnlySpan{byte})"/> and <see cref="Sign(ReadOnlySpan{byte}, ReadOnlySpan{byte})"/>
 /// are <b>constant-time</b>: the field arithmetic (<see cref="Fe25519Ops"/>), the
 /// point operations (<see cref="Ge25519Ops"/>), the scalar multiplication
 /// (<see cref="Ge25519ScalarMult"/>), and the mod-L arithmetic
@@ -53,7 +53,7 @@ namespace LibSsh2CS.Crypto;
 /// <para>
 /// libssh2 C functions replaced: <c>hostkey_method_ssh_ed25519_sig_verify</c>
 /// (hostkey.c ~1251) and <c>_libssh2_ed25519_verify</c> (openssl.c ~4504) both
-/// collapse to <see cref="Verify(byte[], byte[], byte[])"/>. Signature-blob
+/// collapse to <see cref="Verify(ReadOnlySpan{byte}, ReadOnlySpan{byte}, ReadOnlySpan{byte})"/>. Signature-blob
 /// parsing (skip the <c>ssh-ed25519</c> type prefix) is done by the caller
 /// (<c>Transport/HostKeyVerifier.cs</c>). The sign path replaces
 /// <c>_libssh2_ed25519_sign</c> (openssl.c ~4380), which delegates to OpenSSL
@@ -72,7 +72,7 @@ internal static class Ed25519
 
     /// <summary>
     /// L in its canonical 32-byte little-endian encoding, used for constant-time
-    /// range check of the scalar S in <see cref="Verify(byte[], byte[], byte[])"/>.
+    /// range check of the scalar S in <see cref="Verify(ReadOnlySpan{byte}, ReadOnlySpan{byte}, ReadOnlySpan{byte})"/>.
     /// Matches libsodium's <c>sc25519_is_canonical</c> table at
     /// <c>ed25519_ref10.c:2517</c>.
     /// </summary>
@@ -91,7 +91,7 @@ internal static class Ed25519
     /// <param name="message">The signed message.</param>
     /// <param name="signature">The 64-byte signature (R ‖ S).</param>
     /// <returns><c>true</c> if the signature is valid.</returns>
-    public static bool Verify(byte[] publicKey, byte[] message, byte[] signature)
+    public static bool Verify(ReadOnlySpan<byte> publicKey, ReadOnlySpan<byte> message, ReadOnlySpan<byte> signature)
     {
         if (publicKey.Length != 32 || signature.Length != 64)
         {
@@ -104,7 +104,7 @@ internal static class Ed25519
             return false;
         }
 
-        if (Ge25519Ops.FromBytes(out GeP3 r, signature.AsSpan(0, 32).ToArray()) != 0)
+        if (Ge25519Ops.FromBytes(out GeP3 r, signature.Slice(0, 32)) != 0)
         {
             return false;
         }
@@ -119,21 +119,21 @@ internal static class Ed25519
         }
 
         Ge25519Ops.P3ToBytes(encoded, in r);
-        if (!CryptographicOperations.FixedTimeEquals(encoded, signature.AsSpan(0, 32)) || IsSmallOrder(in r))
+        if (!CryptographicOperations.FixedTimeEquals(encoded, signature.Slice(0, 32)) || IsSmallOrder(in r))
         {
             return false;
         }
 
         // Step 2: range-check S < L (RFC 8032 §5.1.7 step 1). Constant-time
         // byte compare; rejects S ≥ L without leaking which check failed.
-        byte[] sBytes = signature.AsSpan(32, 32).ToArray();
+        byte[] sBytes = signature.Slice(32, 32).ToArray();
         if (!IsBelowL(sBytes))
         {
             return false;
         }
 
         // Step 3: k = SHA-512(R ‖ A ‖ M) interpreted little-endian, reduced mod L.
-        byte[] kBytes = Sha512ModL(signature.AsSpan(0, 32).ToArray(), publicKey, message);
+        byte[] kBytes = Sha512ModL(signature.Slice(0, 32), publicKey, message);
 
         // Step 4: compute [S]B and R + [k]A. The unbatched verification equation
         // is [S]B == R + [k]A. We compute both sides independently and compare
@@ -193,7 +193,7 @@ internal static class Ed25519
     /// <returns>A 64-byte signature: <c>R (32 bytes LE) ‖ S (32 bytes LE)</c>.</returns>
     /// <exception cref="ArgumentException">Thrown if <paramref name="seed"/> is
     /// not exactly 32 bytes.</exception>
-    public static byte[] Sign(byte[] seed, byte[] message)
+    public static byte[] Sign(ReadOnlySpan<byte> seed, ReadOnlySpan<byte> message)
     {
         if (seed.Length != 32)
         {
@@ -299,15 +299,15 @@ internal static class Ed25519
     /// <summary>
     /// Computes <c>SHA-512(prefix ‖ message)</c> interpreted little-endian and
     /// reduced mod L. Used by <see cref="Sign"/> step 5 (<c>r</c> derivation).
-    /// Mirrors <see cref="Sha512ModL(byte[], byte[], byte[])"/> but with a
+    /// Mirrors <see cref="Sha512ModL(ReadOnlySpan{byte}, ReadOnlySpan{byte}, ReadOnlySpan{byte})"/> but with a
     /// single prefix+message input instead of <c>R ‖ A ‖ M</c>.
     /// </summary>
-    private static byte[] HashModL(byte[] prefix, byte[] message)
+    private static byte[] HashModL(ReadOnlySpan<byte> prefix, ReadOnlySpan<byte> message)
     {
         int len = prefix.Length + message.Length;
         byte[] buf = new byte[len];
-        prefix.AsSpan().CopyTo(buf);
-        message.AsSpan().CopyTo(buf.AsSpan(prefix.Length));
+        prefix.CopyTo(buf);
+        message.CopyTo(buf.AsSpan(prefix.Length));
 
         byte[] hash = SHA512.HashData(buf);
         CryptographicOperations.ZeroMemory(buf);
@@ -320,13 +320,13 @@ internal static class Ed25519
     /// Python reference). Used by <see cref="Verify"/> (k) and <see cref="Sign"/>
     /// step 7 (k).
     /// </summary>
-    private static byte[] Sha512ModL(byte[] r, byte[] a, byte[] message)
+    private static byte[] Sha512ModL(ReadOnlySpan<byte> r, ReadOnlySpan<byte> a, ReadOnlySpan<byte> message)
     {
         int len = r.Length + a.Length + message.Length;
         byte[] buf = new byte[len];
-        r.AsSpan().CopyTo(buf);
-        a.AsSpan().CopyTo(buf.AsSpan(r.Length));
-        message.AsSpan().CopyTo(buf.AsSpan(r.Length + a.Length));
+        r.CopyTo(buf);
+        a.CopyTo(buf.AsSpan(r.Length));
+        message.CopyTo(buf.AsSpan(r.Length + a.Length));
 
         byte[] hash = SHA512.HashData(buf);
         return ScalarModL.Reduce(hash);

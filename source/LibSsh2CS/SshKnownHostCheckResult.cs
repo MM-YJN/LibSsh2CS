@@ -1,7 +1,7 @@
 namespace LibSsh2CS;
 
 /// <summary>
-/// Result of a <see cref="SshKnownHosts.Check(string, int, byte[], SshKnownHostKeyType, SshKnownHostFormat)"/>
+/// Result of a <see cref="SshKnownHosts.Check(string, int, ReadOnlyMemory{byte}, SshKnownHostKeyType, SshKnownHostFormat)"/>
 /// call. Combines the libssh2 <c>int</c> return code with the matched/mismatched
 /// <see cref="SshKnownHostEntry"/> reference that the C API surfaces via an
 /// out-parameter (<c>struct libssh2_knownhost **ext</c>).

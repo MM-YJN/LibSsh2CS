@@ -46,7 +46,7 @@ public class RunExchangeFlowTests
             verifyAsync: (_, hash, _, _) =>
             {
                 called = true;
-                actualHash = hash;
+                actualHash = hash.ToArray();
                 return Task.FromResult(false);
             }, cancellationToken: ct);
         await using var serverReader = new PacketReader(outbound.Reader);

@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.IO.Pipelines;
 
 using LibSsh2CS.Util;
 
@@ -156,10 +157,10 @@ internal sealed class PacketQueue
     /// flow (parity with libssh2's <c>packet.c:1355-1388</c>).
     /// </summary>
     /// <remarks>
-    /// Set by <see cref="SshSession.HandshakeAsync(System.IO.Pipelines.IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/> after the initial KEX
+    /// Set by <see cref="SshSession.HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/> after the initial KEX
     /// completes. Stays <see langword="null"/> during the initial KEX so that
     /// the initial server KEXINIT falls through to the normal stash path
-    /// (which <see cref="SshSession.HandshakeAsync(System.IO.Pipelines.IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/>'s
+    /// (which <see cref="SshSession.HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/>'s
     /// <see cref="WaitForTypeAsync"/>/<see cref="PacketType.KexInit"/> retrieves
     /// directly).
     /// </remarks>
@@ -529,7 +530,7 @@ internal sealed class PacketQueue
     /// retrieves it via the fast path), then <see cref="RekeyTriggerAsync"/> is
     /// invoked. The initial-KEX server KEXINIT (when <see cref="InitialKex"/>
     /// is still true) falls through to the stash path so
-    /// <see cref="SshSession.HandshakeAsync(System.IO.Pipelines.IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/>'s
+    /// <see cref="SshSession.HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/>'s
     /// <see cref="WaitForTypeAsync"/>/<see cref="PacketType.KexInit"/> retrieves
     /// it directly — matching libssh2's behavior at <c>packet.c:1355-1358</c>
     /// where the rekey branch only fires when

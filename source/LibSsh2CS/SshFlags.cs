@@ -1,3 +1,5 @@
+using System.IO.Pipelines;
+
 namespace LibSsh2CS;
 
 /// <summary>
@@ -33,7 +35,7 @@ public enum SshFlag
     /// <c>LIBSSH2_FLAG_COMPRESS = 2</c>. Enables negotiation of <c>zlib</c> /
     /// <c>zlib@openssh.com</c> compression during KEXINIT. When false (the
     /// default), the client's compression name-list is filtered to <c>none</c>
-    /// only. <see cref="SshSession.HandshakeAsync(System.IO.Pipelines.IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/> consults this flag when
+    /// only. <see cref="SshSession.HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/> consults this flag when
     /// building the KEXINIT.
     /// </summary>
     Compress = 1 << 1,

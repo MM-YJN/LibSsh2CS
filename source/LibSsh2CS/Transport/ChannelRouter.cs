@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
+using System.IO.Pipelines;
 
 using LibSsh2CS.Util;
 
@@ -251,7 +252,7 @@ internal sealed class ChannelRouter : IDisposable
 
     /// <summary>
     /// Wires the rekey auto-trigger. Called by
-    /// <see cref="SshSession.HandshakeAsync(System.IO.Pipelines.IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/> after handshake completion.
+    /// <see cref="SshSession.HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/> after handshake completion.
     /// The router consults <paramref name="policy"/> + the per-direction
     /// counters on <see cref="PacketWriter"/>/<see cref="PacketQueue.Reader"/>
     /// before each pump; if exceeded, invokes <paramref name="rekeyAsyncCallback"/>.
@@ -278,7 +279,7 @@ internal sealed class ChannelRouter : IDisposable
 
     /// <summary>
     /// Wires the listener-lookup callback. Called by
-    /// <see cref="SshSession.HandshakeAsync(System.IO.Pipelines.IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/> (and by tests).
+    /// <see cref="SshSession.HandshakeAsync(IDuplexPipe, HostKeyVerificationCallback, CancellationToken)"/> (and by tests).
     /// </summary>
     internal void ConfigureListenerLookup(Func<string, int, SshListener?> lookup)
     {
