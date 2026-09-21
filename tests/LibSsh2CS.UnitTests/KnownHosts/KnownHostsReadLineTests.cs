@@ -142,7 +142,7 @@ public class KnownHostsReadLineTests
         Assert.NotNull(entry);
         Assert.Equal(SshKnownHostFormat.Sha1, entry!.Format);
         Assert.Equal(hashB64, entry.Name); // Hash stored as base64 text.
-        Assert.Equal(salt, entry.Salt);    // Salt stored as raw bytes.
+        Assert.Equal(new ReadOnlyMemory<byte>(salt), entry.Salt);    // Salt stored as raw bytes.
     }
 
     [Fact]

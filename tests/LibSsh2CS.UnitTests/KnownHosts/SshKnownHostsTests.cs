@@ -1,4 +1,5 @@
 using System.Buffers.Text;
+using System.Security.Cryptography;
 
 using LibSsh2CS.Util;
 
@@ -54,7 +55,7 @@ public class SshKnownHostsTests
             format: SshKnownHostFormat.Plain);
 
         Assert.Equal("example.com", entry.Name);
-        Assert.Null(entry.Salt);
+        Assert.True(entry.Salt.IsEmpty);
         Assert.Equal(Base64.EncodeToString(s_ed25519Key), entry.Key);
         Assert.Equal(SshKnownHostKeyType.Ed25519, entry.KeyType);
         Assert.Equal(SshKnownHostFormat.Plain, entry.Format);
@@ -112,7 +113,7 @@ public class SshKnownHostsTests
             format: SshKnownHostFormat.Sha1);
 
         Assert.Equal(hashBase64, entry.Name);
-        Assert.Equal(s_sha1SaltBytes, entry.Salt);
+        Assert.Equal(new ReadOnlyMemory<byte>(s_sha1SaltBytes), entry.Salt);
         Assert.Equal(SshKnownHostFormat.Sha1, entry.Format);
     }
 
@@ -130,7 +131,62 @@ public class SshKnownHostsTests
             keyType: SshKnownHostKeyType.SshRsa,
             format: SshKnownHostFormat.Plain);
 
-        Assert.Null(entry.Salt);
+        Assert.True(entry.Salt.IsEmpty);
+    }
+
+    [Fact]
+    public void Add_Sha1Format_CopiesSaltSoCallerMutationCannotChangeEntry()
+    {
+        // The caller's array must not alias the entry: mutating it after Add
+        // must leave the stored salt (the read-only view) unchanged.
+        using var known = new SshKnownHosts();
+        byte[] salt = (byte[])s_sha1SaltBytes.Clone();
+
+        SshKnownHostEntry entry = known.Add(
+            host: Base64.EncodeToString(s_sha1HashBytes),
+            salt: salt,
+            key: s_ed25519Key,
+            keyType: SshKnownHostKeyType.Ed25519,
+            format: SshKnownHostFormat.Sha1);
+
+        Assert.Equal(new ReadOnlyMemory<byte>(s_sha1SaltBytes), entry.Salt);
+
+        salt[0] ^= 0xFF;
+
+        // The stored view is still the entry's own copy, not the caller's array.
+        Assert.Equal(new ReadOnlyMemory<byte>(s_sha1SaltBytes), entry.Salt);
+        Assert.True(System.Runtime.InteropServices.MemoryMarshal.TryGetArray(
+            entry.Salt, out ArraySegment<byte> segment));
+        Assert.False(ReferenceEquals(segment.Array, salt));
+    }
+
+    [Fact]
+    public void Add_Sha1Format_CallerSaltMutationDoesNotBreakCheck()
+    {
+        // Same aliasing guard at the behavior level: the hashed-hostname match
+        // recomputes HMAC-SHA1 with the entry's own salt, so tampering with the
+        // caller's array after Add must not change the Check outcome.
+        using var known = new SshKnownHosts();
+        byte[] salt = [0x01, 0x02, 0x03, 0x04];
+
+        byte[] digest;
+        using (var hmac = IncrementalHash.CreateHMAC(HashAlgorithmName.SHA1, salt))
+        {
+            hmac.AppendData("example.com"u8);
+            digest = hmac.GetHashAndReset();
+        }
+
+        known.Add(
+            host: Base64.EncodeToString(digest),
+            salt: salt,
+            key: s_ed25519Key,
+            keyType: SshKnownHostKeyType.Ed25519,
+            format: SshKnownHostFormat.Sha1);
+
+        salt[0] ^= 0xFF;
+
+        SshKnownHostCheckResult result = known.Check("example.com", s_ed25519Key, SshKnownHostKeyType.Ed25519);
+        Assert.Equal(SshKnownHostCheckStatus.Match, result.Status);
     }
 
     [Fact]
@@ -487,7 +543,7 @@ public class SshKnownHostsTests
     public void KnownHostCheckResult_CapturesStatusAndMatched()
     {
         var entry = new SshKnownHostEntry(
-            "h", null, "AQID", SshKnownHostKeyType.SshRsa, SshKnownHostFormat.Plain, null);
+            "h", ReadOnlyMemory<byte>.Empty, "AQID", SshKnownHostKeyType.SshRsa, SshKnownHostFormat.Plain, null);
 
         var match = new SshKnownHostCheckResult(SshKnownHostCheckStatus.Match, entry);
         var miss = new SshKnownHostCheckResult(SshKnownHostCheckStatus.NotFound, null);

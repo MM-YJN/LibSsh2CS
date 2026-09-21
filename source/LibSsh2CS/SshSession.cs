@@ -119,6 +119,10 @@ public sealed class SshSession : IAsyncDisposable
     private byte[]? _hostKey;
     private byte[]? _sessionId;
     private string[]? _serverSigAlgs;
+    // Read-only wrapper over _serverSigAlgs, installed whenever the field is
+    // assigned so the public property cannot be cast back to string[] and
+    // mutated by the caller.
+    private IReadOnlyList<string>? _serverSigAlgsView;
     private string? _userAuthBanner;
     private bool _authenticated;
     private bool _handshakeCompleted;
@@ -162,9 +166,15 @@ public sealed class SshSession : IAsyncDisposable
 
     /// <summary>
     /// The raw server host-key blob, available after <see cref="HandshakeAsync(IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/>
-    /// completes. Returns <see langword="null"/> before handshake.
+    /// completes. Returns an empty value before handshake (a completed
+    /// handshake always yields a non-empty <c>K_S</c>).
     /// </summary>
-    public byte[]? HostKey => _hostKey;
+    /// <remarks>
+    /// A read-only view over the session's private copy, not a snapshot. The
+    /// type system prevents ordinary mutation; callers must not attempt to
+    /// mutate the underlying buffer.
+    /// </remarks>
+    public ReadOnlyMemory<byte> HostKey => _hostKey ?? ReadOnlyMemory<byte>.Empty;
 
     /// <summary>
     /// The negotiated host-key algorithm name (e.g. <c>"ssh-ed25519"</c>),
@@ -174,9 +184,15 @@ public sealed class SshSession : IAsyncDisposable
 
     /// <summary>
     /// The SSH session id — the first exchange hash <c>H</c>, immutable across
-    /// rekeys. Returns <see langword="null"/> before the first handshake completes.
+    /// rekeys. Returns an empty value before the first handshake completes.
     /// </summary>
-    public byte[]? SessionId => _sessionId;
+    /// <remarks>
+    /// A read-only view over the session's private copy, not a snapshot. The
+    /// type system prevents ordinary mutation; the session id is prepended to
+    /// every userauth signature, so callers must not attempt to mutate the
+    /// underlying buffer.
+    /// </remarks>
+    public ReadOnlyMemory<byte> SessionId => _sessionId ?? ReadOnlyMemory<byte>.Empty;
 
     /// <summary>
     /// The server's identification string (banner), CRLF-stripped. Returns
@@ -191,11 +207,17 @@ public sealed class SshSession : IAsyncDisposable
 
     /// <summary>
     /// The <c>server-sig-algs</c> extension value from <c>SSH_MSG_EXT_INFO</c>
-    /// (RFC 8308 §3.1), split on commas. Empty if the server did not advertise
-    /// it. Consulted by <see cref="SshUserAuth"/> for RSA-SHA2 algorithm selection.
-    /// Returns <see langword="null"/> before handshake.
+    /// (RFC 8308 §3.1), split on commas. Empty if the server sent
+    /// <c>SSH_MSG_EXT_INFO</c> without advertising <c>server-sig-algs</c>.
+    /// Consulted by <see cref="SshUserAuth"/> for RSA-SHA2 algorithm selection.
+    /// Returns <see langword="null"/> before handshake (no EXT_INFO received).
     /// </summary>
-    public string[]? ServerSignatureAlgorithms => _serverSigAlgs;
+    /// <remarks>
+    /// A read-only list over the parsed value. The <see langword="null"/> state
+    /// is retained because it distinguishes "no EXT_INFO was received" from
+    /// "EXT_INFO was received but did not carry <c>server-sig-algs</c>".
+    /// </remarks>
+    public IReadOnlyList<string>? ServerSignatureAlgorithms => _serverSigAlgsView;
 
     /// <summary>
     /// Sets <see cref="ServerSignatureAlgorithms"/> directly. Internal — used by
@@ -203,7 +225,18 @@ public sealed class SshSession : IAsyncDisposable
     /// against a real server (the value is normally populated from EXT_INFO by
     /// <see cref="HandshakeAsync(IDuplexPipe, Func{byte[], byte[], CancellationToken, Task{bool}}, CancellationToken)"/>).
     /// </summary>
-    internal void SetServerSignatureAlgorithmsForTest(string[]? algs) => _serverSigAlgs = algs;
+    internal void SetServerSignatureAlgorithmsForTest(string[]? algs)
+        => SetServerSignatureAlgorithms(algs);
+
+    /// <summary>
+    /// Installs <see cref="ServerSignatureAlgorithms"/> and its read-only view
+    /// together, so the public property and the internal array never diverge.
+    /// </summary>
+    private void SetServerSignatureAlgorithms(string[]? algs)
+    {
+        _serverSigAlgs = algs;
+        _serverSigAlgsView = algs is null ? null : Array.AsReadOnly(algs);
+    }
 
     /// <summary>
     /// Sets the outbound packet writer directly, bypassing the
@@ -592,6 +625,18 @@ public sealed class SshSession : IAsyncDisposable
             }
 
             _channelRouter?.Dispose();
+
+            // Clear the cached handshake state so the public surface reports
+            // "not available" after a failed handshake: HostKey/SessionId are
+            // empty, ServerSignatureAlgorithms/ServerBanner are null. Without
+            // this, a failure after the KEX (e.g. SERVICE_REQUEST rejected)
+            // could leave stale values that look like a completed handshake.
+            _hostKey = null;
+            _sessionId = null;
+            _serverBanner = null;
+            _negotiated = null;
+            SetServerSignatureAlgorithms(null);
+
             Interlocked.Exchange(ref _handshakeStarted, 0);
             throw;
         }
@@ -689,7 +734,12 @@ public sealed class SshSession : IAsyncDisposable
                 return false;
             }
 
-            return await verifyHostKeyAsync(hostKey, h, ct).ConfigureAwait(false);
+            // Hand the callback copies: K_S and H are the same arrays the KEX
+            // layer keeps using for key derivation and stores as the session's
+            // host key / session id. A callback that mutates its arguments must
+            // not be able to corrupt that state (the same reason libssh2
+            // recomputes its hashes from an owned copy).
+            return await verifyHostKeyAsync((byte[])hostKey.Clone(), (byte[])h.Clone(), ct).ConfigureAwait(false);
         }
 
         // ── 4. SERVICE_REQUEST "ssh-userauth" (session.c:797-858) ──────────
@@ -706,7 +756,7 @@ public sealed class SshSession : IAsyncDisposable
         if (_queue.TryTakeStashed(PacketType.ExtInfo, out RawPacket extInfoPkt))
         {
             var ext = ExtInfo.Parse(extInfoPkt.Payload);
-            _serverSigAlgs = ext.ServerSignatureAlgorithms;
+            SetServerSignatureAlgorithms(ext.ServerSignatureAlgorithms);
         }
 
         _handshakeCompleted = true;

@@ -193,19 +193,25 @@ public sealed class SshKnownHosts : IDisposable
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(base64Key);
 
-        if (format == SshKnownHostFormat.Sha1 && (salt is null || salt.Length == 0))
-        {
-            throw new SshException(
-                SshErrorCode.Inval,
-                "SHA1-format known-host entries require a non-empty salt");
-        }
-
         // Parity with the Plain/Custom branch of knownhost_add (knownhost.c:162-172):
         // the C code's calloc leaves entry->salt NULL unless the SHA1 branch
         // (knownhost.c:181-186) explicitly populates it. We mirror that by
         // dropping any caller-supplied salt for non-SHA1 formats — the field
-        // is meaningless without a hash to salt it.
-        byte[]? storedSalt = format == SshKnownHostFormat.Sha1 ? salt : null;
+        // is meaningless without a hash to salt it. The SHA1 branch copies the
+        // salt so the entry owns it: the caller's array must not be able to
+        // change a stored entry's HMAC after Add returns.
+        byte[]? storedSalt = null;
+        if (format == SshKnownHostFormat.Sha1)
+        {
+            if (salt is null || salt.Length == 0)
+            {
+                throw new SshException(
+                    SshErrorCode.Inval,
+                    "SHA1-format known-host entries require a non-empty salt");
+            }
+
+            storedSalt = (byte[])salt.Clone();
+        }
 
         // Only UNKNOWN entries carry the wire key-type name (parity with
         // knownhost.c:221-232). Known types derive the name from KeyType at
@@ -797,7 +803,7 @@ public sealed class SshKnownHosts : IDisposable
             // Hashed: |1|<base64-salt>|<base64-hash>
             // Salt is stored raw; re-encode for output. Hash (entry.Name) is
             // already base64 — emit verbatim.
-            if (entry.Salt is null || entry.Salt.Length == 0)
+            if (entry.Salt.IsEmpty)
             {
                 throw new SshException(
                     SshErrorCode.Inval,
@@ -1057,7 +1063,7 @@ public sealed class SshKnownHosts : IDisposable
         // corrupt entry (or one constructed via reflection) could lack it.
         // Parity: knownhost.c:432-434 fails closed on _libssh2_hmac_sha1_init
         // error; we fail closed on a missing salt.
-        if (node.Salt is null || node.Salt.Length == 0)
+        if (node.Salt.IsEmpty)
         {
             return false;
         }
@@ -1111,7 +1117,7 @@ public sealed class SshKnownHosts : IDisposable
             // guard above is required: Verify throws ArgumentException on a
             // non-HashSizeInBytes hash, but parity with knownhost.c:427-431 wants a
             // silent skip (return false) for a corrupt stored digest.
-            return HMACSHA1.Verify(node.Salt, hostBytes, storedHash);
+            return HMACSHA1.Verify(node.Salt.Span, hostBytes, storedHash);
         }
         finally
         {

@@ -61,6 +61,14 @@ internal sealed class MockSshServer : IDisposable
     /// <summary>The server's Ed25519 host key (32-byte public seed).</summary>
     public byte[] HostKeySeed { get; } = new byte[32];
 
+    /// <summary>
+    /// When set, sent as the SERVICE_ACCEPT service name instead of
+    /// <c>ssh-userauth</c>. A mismatch makes the client throw
+    /// <see cref="SshErrorCode.Proto"/> after the KEX has completed — used to
+    /// exercise the failed-handshake state reset.
+    /// </summary>
+    public string ServiceAcceptOverride { get; set; } = "ssh-userauth";
+
     /// <summary>The server's host key blob (K_S, as sent in KEXDH_REPLY).</summary>
     public byte[] HostKeyBlob { get; private set; } = Array.Empty<byte>();
 
@@ -205,8 +213,9 @@ internal sealed class MockSshServer : IDisposable
         // ── SERVICE_REQUEST → SERVICE_ACCEPT ─────────────────────────────
         RawPacket svcReq = await serverReader.ReadPacketAsync(cancellationToken).ConfigureAwait(false);
         AssertType(PacketType.ServiceRequest, svcReq);
-        // Echo "ssh-userauth" back in the SERVICE_ACCEPT.
-        byte[] svc = Encoding.ASCII.GetBytes("ssh-userauth");
+        // Echo "ssh-userauth" back in the SERVICE_ACCEPT (or the override,
+        // which drives the client's post-KEX Proto failure path).
+        byte[] svc = Encoding.ASCII.GetBytes(ServiceAcceptOverride);
         byte[] svcAccept = new byte[1 + 4 + svc.Length];
         svcAccept[0] = (byte)PacketType.ServiceAccept;
         BinaryPrimitives.WriteUInt32BigEndian(svcAccept.AsSpan(1, 4), (uint)svc.Length);

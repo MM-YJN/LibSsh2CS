@@ -24,9 +24,9 @@ namespace LibSsh2CS;
 /// <b>Hostname representation:</b>
 /// <list type="bullet">
 /// <item><term><see cref="SshKnownHostFormat.Plain"/></term>
-///     <description><see cref="Name"/> is the plaintext hostname; <see cref="Salt"/> is <c>null</c>.</description></item>
+///     <description><see cref="Name"/> is the plaintext hostname; <see cref="Salt"/> is empty.</description></item>
 /// <item><term><see cref="SshKnownHostFormat.Custom"/></term>
-///     <description><see cref="Name"/> is the caller-supplied pre-hashed hostname (compared by string equality); <see cref="Salt"/> is <c>null</c>.</description></item>
+///     <description><see cref="Name"/> is the caller-supplied pre-hashed hostname (compared by string equality); <see cref="Salt"/> is empty.</description></item>
 /// <item><term><see cref="SshKnownHostFormat.Sha1"/></term>
 ///     <description><see cref="Name"/> is the HMAC-SHA1 digest (already base64-decoded into bytes — i.e. <see cref="Name"/> holds the raw digest text); <see cref="Salt"/> is the raw salt bytes. For fidelity to <c>struct known_host-&gt;name</c>/<c>salt</c>, these are not re-encoded into base64 in memory — only at <c>WriteLine</c> time.</description></item>
 /// </list>
@@ -51,8 +51,10 @@ namespace LibSsh2CS;
 /// digest text (for <see cref="SshKnownHostFormat.Sha1"/>). Never <c>null</c>.
 /// </param>
 /// <param name="Salt">
-/// Raw salt bytes for <see cref="SshKnownHostFormat.Sha1"/> entries; <c>null</c>
-/// for all other formats.
+/// Raw salt bytes for <see cref="SshKnownHostFormat.Sha1"/> entries; empty for
+/// all other formats. The collection copies the caller's array in
+/// <see cref="SshKnownHosts.Add(string, byte[], byte[], SshKnownHostKeyType, SshKnownHostFormat, string)"/>,
+/// so the entry owns its salt and the property is a read-only view.
 /// </param>
 /// <param name="Key">
 /// The base64-encoded public key (no key-type prefix; no comment). Never
@@ -81,7 +83,7 @@ namespace LibSsh2CS;
 /// </param>
 public sealed record SshKnownHostEntry(
     string Name,
-    byte[]? Salt,
+    ReadOnlyMemory<byte> Salt,
     string Key,
     SshKnownHostKeyType KeyType,
     SshKnownHostFormat Format,

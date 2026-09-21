@@ -357,7 +357,7 @@ public static class SshUserAuth
         byte[] signedPacket = (byte[])probe.Clone();
         signedPacket[boolOffset] = 0x01;
 
-        byte[] signedData = BuildSignedData(session.SessionId!, signedPacket);
+        byte[] signedData = BuildSignedData(session.SessionId.Span, signedPacket);
         byte[] sigBlob;
         try
         {
@@ -609,7 +609,7 @@ public static class SshUserAuth
             hostname, localUsername);
 
         // Sign session_id ‖ the USERAUTH_REQUEST packet (no probe step for hostbased).
-        byte[] signedData = BuildSignedData(session.SessionId!, packet);
+        byte[] signedData = BuildSignedData(session.SessionId.Span, packet);
         byte[] sigBlob = SshSign.Sign(pemKey, signedData, algoName);
 
         // Append [string sigBlob] and send.
@@ -788,8 +788,8 @@ public static class SshUserAuth
     /// </remarks>
     private static string SelectRsaAlgorithm(SshSession session)
     {
-        string[]? serverAlgs = session.ServerSignatureAlgorithms;
-        if (serverAlgs is null || serverAlgs.Length == 0)
+        IReadOnlyList<string>? serverAlgs = session.ServerSignatureAlgorithms;
+        if (serverAlgs is null || serverAlgs.Count == 0)
         {
             // No EXT_INFO received — fall back to ssh-rsa (the historical
             // default; userauth.c:1570-1590 skips the upgrade when
@@ -812,7 +812,7 @@ public static class SshUserAuth
                 continue;
             }
 
-            if (Array.IndexOf(serverAlgs, candidate) >= 0)
+            if (serverAlgs.Contains(candidate, StringComparer.Ordinal))
             {
                 return candidate;
             }
@@ -990,12 +990,12 @@ public static class SshUserAuth
     /// Mirrors <c>userauth.c:1733-1746</c> (publickey) and <c>userauth.c:1106-1113</c>
     /// (hostbased) — both sign <c>session_id ‖ USERAUTH_REQUEST</c>.
     /// </summary>
-    private static byte[] BuildSignedData(byte[] sessionId, byte[] request)
+    private static byte[] BuildSignedData(ReadOnlySpan<byte> sessionId, ReadOnlySpan<byte> request)
     {
         byte[] blob = new byte[4 + sessionId.Length + request.Length];
         BinaryPrimitives.WriteInt32BigEndian(blob.AsSpan(0, 4), sessionId.Length);
-        Buffer.BlockCopy(sessionId, 0, blob, 4, sessionId.Length);
-        Buffer.BlockCopy(request, 0, blob, 4 + sessionId.Length, request.Length);
+        sessionId.CopyTo(blob.AsSpan(4));
+        request.CopyTo(blob.AsSpan(4 + sessionId.Length));
         return blob;
     }
 

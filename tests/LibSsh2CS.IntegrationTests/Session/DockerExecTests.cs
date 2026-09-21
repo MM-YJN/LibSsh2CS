@@ -257,7 +257,7 @@ public sealed class DockerExecTests : IDisposable
         await session.AuthenticateWithPasswordAsync(SshDockerFixture.TestUser, SshDockerFixture.TestPassword,
             cancellationToken: ct);
 
-        byte[] hostKeyBefore = session.HostKey ?? throw new InvalidOperationException("HostKey null after handshake.");
+        byte[] hostKeyBefore = session.HostKey.ToArray();
 
         await using SshChannel channel = await session.OpenSessionAsync(ct);
         (string? stdout, int exit) = await ExecAndDrainAsync(channel, "seq 1 1000", ct);
@@ -271,7 +271,7 @@ public sealed class DockerExecTests : IDisposable
 
         // Post-rekey hostkey + fingerprint must still reflect the server's
         // ed25519 host key (the rekey refreshed them from the new K_S).
-        Assert.NotNull(session.HostKey);
+        Assert.False(session.HostKey.IsEmpty);
         Assert.Equal(hostKeyBefore, session.HostKey);
 
         string pubLine = await container.GetHostKeyAsync("ed25519", ct);

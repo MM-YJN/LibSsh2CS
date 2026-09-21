@@ -89,7 +89,7 @@ public sealed class DockerKnownHostsTests : IDisposable
         await using (SshSession probe = await SshDockerFixture.ConnectAsync(
             SshDockerFixture.Host, container.Port, cancellationToken))
         {
-            hostKey = probe.HostKey ?? throw new InvalidOperationException("HostKey null after handshake.");
+            hostKey = probe.HostKey.ToArray();
             (hostKeyWireName, knownType) = ReadHostKeyType(hostKey);
         }
 
@@ -128,7 +128,7 @@ public sealed class DockerKnownHostsTests : IDisposable
                 },
                 cancellationToken);
 
-            Assert.NotNull(session.HostKey);
+            Assert.False(session.HostKey.IsEmpty);
             Assert.Equal(hostKeyWireName, session.HostKeyAlgorithm);
         }
         finally
@@ -173,7 +173,7 @@ public sealed class DockerKnownHostsTests : IDisposable
         await using (SshSession probe = await SshDockerFixture.ConnectAsync(
             SshDockerFixture.Host, container.Port, cancellationToken))
         {
-            hostKey = probe.HostKey ?? throw new InvalidOperationException("HostKey null after handshake.");
+            hostKey = probe.HostKey.ToArray();
             (_, knownType) = ReadHostKeyType(hostKey);
         }
 
@@ -292,7 +292,7 @@ public sealed class DockerKnownHostsTests : IDisposable
         await using (SshSession probe = await SshDockerFixture.ConnectAsync(
             SshDockerFixture.Host, container.Port, cancellationToken))
         {
-            hostKey = probe.HostKey ?? throw new InvalidOperationException("HostKey null after handshake.");
+            hostKey = probe.HostKey.ToArray();
             (_, knownType) = ReadHostKeyType(hostKey);
         }
 

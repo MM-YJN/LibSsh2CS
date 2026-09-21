@@ -104,6 +104,13 @@ public class HandshakeReentryTests
                 verifyHostKeyAsync: (_, _, _) => Task.FromResult(true), ct)
                 .WaitAsync(TimeSpan.FromSeconds(10), ct));
 
+        // The failed handshake must also clear the cached handshake state so
+        // the public surface reports "not available" before the retry.
+        Assert.True(session.HostKey.IsEmpty);
+        Assert.True(session.SessionId.IsEmpty);
+        Assert.Null(session.ServerSignatureAlgorithms);
+        Assert.Null(session.ServerBanner);
+
         // The failure path must dispose the fresh writer/queue/router (no leak)
         // AND reset the re-entry guard so a retry is allowed. Post-fix this
         // succeeds; a leak or a stuck guard would break it.

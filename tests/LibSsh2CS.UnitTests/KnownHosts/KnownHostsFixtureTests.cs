@@ -123,7 +123,7 @@ public class KnownHostsFixtureTests
         {
             Assert.Equal(SshKnownHostFormat.Plain, e!.Format);
             // Plain entries store the host form verbatim (no salt).
-            Assert.Null(e.Salt);
+            Assert.True(e.Salt.IsEmpty);
         }
     }
 
@@ -172,8 +172,7 @@ public class KnownHostsFixtureTests
             Assert.Equal(SshKnownHostFormat.Sha1, e!.Format);
             // SHA1 entries: Name is the base64-encoded HMAC-SHA1 digest; Salt
             // is the raw salt bytes (caller decodes from base64 at Add time).
-            Assert.NotNull(e.Salt);
-            Assert.NotEmpty(e.Salt);
+            Assert.False(e.Salt.IsEmpty);
         }
     }
 
@@ -299,11 +298,11 @@ public class KnownHostsFixtureTests
 
         SshKnownHostEntry? entry = FindByType(known, keyType);
         Assert.NotNull(entry);
-        Assert.NotNull(entry!.Salt);
+        Assert.False(entry!.Salt.IsEmpty);
         Assert.Equal(wireName, SshHostKeyTypeRegistry.WireNameFor(entry!.KeyType));
 
         byte[] expectedDigest;
-        using (var hmac = IncrementalHash.CreateHMAC(HashAlgorithmName.SHA1, entry.Salt!))
+        using (var hmac = IncrementalHash.CreateHMAC(HashAlgorithmName.SHA1, entry.Salt.Span))
         {
             hmac.AppendData(Encoding.UTF8.GetBytes(FixtureHostForm));
             expectedDigest = hmac.GetHashAndReset();

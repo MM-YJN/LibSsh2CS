@@ -1,4 +1,5 @@
 using System.IO.Pipelines;
+using System.Security.Cryptography;
 
 using LibSsh2CS.Transport;
 
@@ -139,6 +140,77 @@ public class HostTrustTests
         {
             File.Delete(path);
         }
+    }
+
+    /// <summary>
+    /// The trust callback receives copies of <c>K_S</c> and <c>H</c>: a
+    /// callback that mutates its arguments must not corrupt the session's
+    /// stored host key, session id, or fingerprint.
+    /// </summary>
+    /// <remarks>
+    /// Before the fix the callback saw the KEX layer's live arrays — the same
+    /// instances kept for key derivation and stored in the session — so writing
+    /// to them changed <see cref="SshSession.HostKey"/>,
+    /// <see cref="SshSession.SessionId"/>, and
+    /// <see cref="SshSession.HostKeyHash"/>.
+    /// </remarks>
+    [Fact]
+    public async Task Callback_MutatingArguments_DoesNotCorruptSessionState()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        using var mock = new MockSshServer();
+        await using var session = new SshSession();
+
+        Task server = mock.RunAsync("SSH-2.0-LibSsh2CS_" + LibSsh2Version.Version, ct);
+        await session.HandshakeAsync(new DuplexPipeFromPipes(mock.ClientReader, mock.ClientWriter),
+            (key, hash, _) =>
+            {
+                // Mutate every byte the callback was handed.
+                key.AsSpan().Fill(0xAA);
+                hash.AsSpan().Fill(0xBB);
+                return Task.FromResult(true);
+            }, ct);
+        await server;
+
+        Assert.Equal(mock.HostKeyBlob, session.HostKey.ToArray());
+        Assert.Equal(mock.ExchangeHash, session.SessionId.ToArray());
+
+        string expectedFingerprint =
+            Convert.ToHexString(SHA256.HashData(mock.HostKeyBlob)).ToLowerInvariant();
+        Assert.Equal(expectedFingerprint, session.HostKeyHash(SshHostKeyHashType.Sha256));
+    }
+
+    /// <summary>
+    /// A handshake that fails after the KEX has produced <c>K_S</c>/<c>H</c>
+    /// must leave the session's handshake state cleared: the public surface has
+    /// to report "not available" rather than a partial handshake.
+    /// </summary>
+    /// <remarks>
+    /// The mock answers SERVICE_REQUEST with a mismatched service name, so the
+    /// client throws <see cref="SshErrorCode.Proto"/> after
+    /// <c>_hostKey</c>/<c>_sessionId</c> were populated by the KEX.
+    /// </remarks>
+    [Fact]
+    public async Task FailedHandshakeAfterKex_ClearsHandshakeState()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var mock = new MockSshServer { ServiceAcceptOverride = "ssh-not-userauth" };
+        await using var session = new SshSession();
+
+        Task server = mock.RunAsync("SSH-2.0-LibSsh2CS_" + LibSsh2Version.Version, cts.Token);
+        SshException ex = await Assert.ThrowsAsync<SshException>(() =>
+            session.HandshakeAsync(new DuplexPipeFromPipes(mock.ClientReader, mock.ClientWriter),
+                (_, _, _) => Task.FromResult(true), cts.Token));
+
+        Assert.Equal(SshErrorCode.Proto, ex.ErrorCode);
+        Assert.True(session.HostKey.IsEmpty);
+        Assert.True(session.SessionId.IsEmpty);
+        Assert.Null(session.ServerSignatureAlgorithms);
+        Assert.Null(session.ServerBanner);
+        Assert.Throws<InvalidOperationException>(() => session.HostKeyHash(SshHostKeyHashType.Sha256));
+
+        await server;
     }
 
     private sealed class UntouchablePipe : IDuplexPipe
