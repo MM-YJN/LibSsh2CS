@@ -25,6 +25,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="LibSsh2CS.UnitTests" />
     <InternalsVisibleTo Include="LibSsh2CS.IntegrationTests" />
+    <InternalsVisibleTo Include="LibSsh2CS.Benchmarks" />
   </ItemGroup>
 
   <ItemGroup>

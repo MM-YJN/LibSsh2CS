@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/LibSsh2CS.Benchmarks/LibSsh2CS.Benchmarks.csproj" />
+  </Folder>
   <Folder Name="/source/">
     <Project Path="source/LibSsh2CS/LibSsh2CS.csproj" />
   </Folder>
