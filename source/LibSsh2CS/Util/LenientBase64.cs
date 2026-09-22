@@ -13,23 +13,23 @@ namespace LibSsh2CS.Util;
 internal static class LenientBase64
 {
     /// <summary>
-    /// Decodes with the C's exact semantics into a fresh array. The maximum
-    /// output length is <paramref name="src"/>.Length (the 4:3 ratio bounds
-    /// it strictly below); the caller should zero the result after use (it
-    /// may hold key material).
+    /// Gets the minimum destination capacity required to decode an input of
+    /// <paramref name="encodedLength"/> characters, including the staged byte
+    /// written for a partial trailing group.
     /// </summary>
-    public static byte[] Decode(ReadOnlySpan<byte> src)
+    public static int GetMaxDecodedLength(int encodedLength)
     {
-        byte[] output = new byte[Math.Max(src.Length, 1)];
-        int length = Decode(src, output);
-        return output.AsSpan(0, length).ToArray();
+        ArgumentOutOfRangeException.ThrowIfNegative(encodedLength);
+
+        // n - floor(n / 4) equals ceil(3n / 4) without multiplication overflow.
+        return encodedLength - encodedLength / 4;
     }
 
     /// <summary>
     /// Decodes with the C's exact semantics into <paramref name="destination"/>
-    /// and returns the number of bytes written. The destination must be at
-    /// least <paramref name="src"/>.Length bytes (the decoded length is always
-    /// ≤ ceil(valid_sextets * 3 / 4) &lt; src.Length for non-empty input).
+    /// and returns the number of completed bytes. The destination must be at
+    /// least <see cref="GetMaxDecodedLength"/> bytes for the source length to
+    /// accommodate the staged byte written for a partial trailing group.
     /// </summary>
     /// <exception cref="SshException">Thrown with <see cref="SshErrorCode.Inval"/>
     /// when a single leftover sextet remains (the C's only failure,
@@ -75,14 +75,6 @@ internal static class LenientBase64
         }
 
         return len;
-    }
-
-    /// <summary>Char overload (ASCII text inputs — known_hosts fields).</summary>
-    public static byte[] Decode(ReadOnlySpan<char> src)
-    {
-        byte[] output = new byte[Math.Max(src.Length, 1)];
-        int length = Decode(src, output);
-        return output.AsSpan(0, length).ToArray();
     }
 
     /// <summary>

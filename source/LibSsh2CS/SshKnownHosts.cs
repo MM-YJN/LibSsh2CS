@@ -141,15 +141,14 @@ public sealed class SshKnownHosts : IDisposable
     /// <exception cref="ObjectDisposedException">Thrown if this instance is disposed.</exception>
     public SshKnownHostEntry Add(
         string host,
-        byte[]? salt,
-        byte[] key,
+        ReadOnlySpan<byte> salt,
+        ReadOnlySpan<byte> key,
         SshKnownHostKeyType keyType,
         SshKnownHostFormat format,
         string? comment = null)
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(host);
-        ArgumentNullException.ThrowIfNull(key);
 
         // Public Add takes raw key bytes and base64-encodes them once here
         // (parity with the KEYENC_RAW branch at knownhost.c:207-219). The
@@ -182,7 +181,7 @@ public sealed class SshKnownHosts : IDisposable
     /// </param>
     internal SshKnownHostEntry AddParsed(
         string host,
-        byte[]? salt,
+        ReadOnlySpan<byte> salt,
         string base64Key,
         SshKnownHostKeyType keyType,
         SshKnownHostFormat format,
@@ -203,14 +202,14 @@ public sealed class SshKnownHosts : IDisposable
         byte[]? storedSalt = null;
         if (format == SshKnownHostFormat.Sha1)
         {
-            if (salt is null || salt.Length == 0)
+            if (salt.Length == 0)
             {
                 throw new SshException(
                     SshErrorCode.Inval,
                     "SHA1-format known-host entries require a non-empty salt");
             }
 
-            storedSalt = (byte[])salt.Clone();
+            storedSalt = salt.ToArray();
         }
 
         // Only UNKNOWN entries carry the wire key-type name (parity with
@@ -711,13 +710,17 @@ public sealed class SshKnownHosts : IDisposable
         // lazily at Check time. Uses libssh2's lenient decoder (skips junk,
         // accepts unpadded tails — misc.c:396-424); the BCL decoder rejected
         // non-canonical salts the C accepts.
-        byte[] saltBytes;
+        byte[] saltBytesBuffer = ArrayPool<byte>.Shared.Rent(LenientBase64.GetMaxDecodedLength(saltBase64.Length));
+        Span<byte> saltBytes;
         try
         {
-            saltBytes = LenientBase64.Decode(saltBase64);
+            int decodedLength = LenientBase64.Decode(saltBase64, saltBytesBuffer);
+            saltBytes = saltBytesBuffer.AsSpan(0, decodedLength);
         }
         catch (SshException ex) when (ex.ErrorCode == SshErrorCode.Inval)
         {
+            ArrayPool<byte>.Shared.Return(saltBytesBuffer);
+
             throw new SshException(
                 SshErrorCode.MethodNotSupported,
                 "Failed to parse known_hosts line (invalid base64 salt)");
@@ -731,6 +734,8 @@ public sealed class SshKnownHosts : IDisposable
             format: SshKnownHostFormat.Sha1,
             comment: hasComment ? comment.ToString() : null,
             keyTypeName: keyTypeName.ToString());
+
+        ArrayPool<byte>.Shared.Return(saltBytesBuffer);
     }
 
     /// <summary>
@@ -1076,14 +1081,11 @@ public sealed class SshKnownHosts : IDisposable
         // the C accepts and matches — previously failed the BCL decoder and
         // silently never matched. The C's only
         // decode failure (a lone leftover sextet) throws Inval → no match.
-        // Size the decode buffer from the stored text length, not
-        // Base64.GetMaxDecodedLength (3·⌊L/4⌋ — the BCL strict decoder's floor
-        // bound): the lenient decoder (misc.c:396-424) accepts unpadded tails
-        // and writes partial trailing groups, up to 3·⌊L/4⌋+2 bytes — up to 2
-        // past the floor bound. LenientBase64's contract is "destination must
-        // be at least src.Length bytes", and the decoded length is always ≤
-        // the input length.
-        byte[] storedHashBuffer = ArrayPool<byte>.Shared.Rent(node.Name.Length);
+        // Use the lenient decoder's ceiling capacity rather than the BCL strict
+        // decoder's floor bound. The extra capacity holds the staged byte for
+        // an unpadded partial trailing group.
+        int storedHashCapacity = LenientBase64.GetMaxDecodedLength(node.Name.Length);
+        byte[] storedHashBuffer = ArrayPool<byte>.Shared.Rent(storedHashCapacity);
         byte[]? hostBytesBuffer = null;
         try
         {

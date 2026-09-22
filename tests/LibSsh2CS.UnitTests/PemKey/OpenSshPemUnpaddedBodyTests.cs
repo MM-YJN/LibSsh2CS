@@ -4,7 +4,7 @@ namespace LibSsh2CS.UnitTests.PemKey;
 
 /// <summary>
 /// Regression tests for the OpenSSH PEM decode-buffer sizing: the
-/// parse buffer must be sized from the base64 body length, not
+/// parse buffer must use the lenient decoder's ceiling capacity, not
 /// <c>Base64.GetMaxDecodedLength</c> (3·⌊L/4⌋ — the BCL strict decoder's
 /// floor bound), because <see cref="SshPemParser"/> decodes with the libssh2
 /// lenient decoder (<c>misc.c:396-424</c>), which accepts unpadded tails and
@@ -24,8 +24,8 @@ public class OpenSshPemUnpaddedBodyTests
     /// the 256-byte <c>stackalloc</c> / 1024-byte pool bucket. The current
     /// runtime's <c>GetMaxByteCount(0) = 3</c> passphrase slack happens to
     /// mask the overrun (255+3 &gt; 256 forces the pool path); this test pins
-    /// the sizing rule (buffer ≥ body length) so the partial-tail write can
-    /// never reach the boundary even if that slack changes.
+    /// the lenient ceiling-capacity rule so the partial-tail write can never
+    /// reach the boundary even if that slack changes.
     /// </summary>
     [Theory]
     [InlineData(342)]   // pre-fix bound 3·⌊343/4⌋ = 255 → last write at index 256

@@ -168,15 +168,10 @@ public static class SshPemParser
             throw new SshException(SshErrorCode.File, "PEM armor missing or OpenSSH header not found");
         }
 
-        // Size the decode buffer from the body length, not the BCL strict
-        // decoder's floor bound Base64.GetMaxDecodedLength (3·⌊L/4⌋): the
-        // lenient decoder (misc.c:396-424) skips junk, accepts unpadded tails,
-        // and writes partial trailing groups — up to 3·⌊L/4⌋+2 bytes, i.e. up
-        // to 2 past the floor bound (the C's own ((src_len / 4) * 3) + 1 at
-        // misc.c:389 is also 1-2 bytes short). LenientBase64's contract is
-        // "destination must be at least src.Length bytes" (same as its
-        // fresh-array overload, LenientBase64.cs:24), so size from b64.Length.
-        int maxDecodedLength = b64.Length;
+        // Use the lenient decoder's ceiling capacity rather than the BCL strict
+        // decoder's floor bound. The extra capacity holds the staged byte for
+        // an unpadded partial trailing group.
+        int maxDecodedLength = LenientBase64.GetMaxDecodedLength(b64.Length);
         int maxPassphraseBytes = Encoding.UTF8.GetMaxByteCount(passphrase?.Length ?? 0);
         int totalLength = maxDecodedLength + maxPassphraseBytes;
 
@@ -633,9 +628,12 @@ public static class SshPemParser
     {
         (bool encrypted, string? dekCipher, string? dekIvHex) = SplitLegacyHeaders(body, out ReadOnlySpan<byte> b64);
 
-        byte[] decoded = LenientBase64.Decode(b64);
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(LenientBase64.GetMaxDecodedLength(b64.Length));
         try
         {
+            int decodedLength = LenientBase64.Decode(b64, buffer);
+            Span<byte> decoded = buffer.AsSpan(0, decodedLength);
+
             if (!encrypted)
             {
                 // Unencrypted PKCS#1 — a supplied passphrase is silently
@@ -647,7 +645,8 @@ public static class SshPemParser
         }
         finally
         {
-            CryptographicOperations.ZeroMemory(decoded);
+            CryptographicOperations.ZeroMemory(buffer);
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 
@@ -659,7 +658,7 @@ public static class SshPemParser
     /// first 8 IV bytes (PKCS5_SALT_LEN; pem_lib.c:345-385, 416-460).
     /// Shared by the PKCS#1 and SEC1 EC legacy paths.
     /// </summary>
-    private static byte[] DecryptTraditionalPemBody(string? dekCipher, string? dekIvHex, byte[] decoded, string? passphrase)
+    private static byte[] DecryptTraditionalPemBody(string? dekCipher, string? dekIvHex, ReadOnlySpan<byte> decoded, string? passphrase)
     {
         if (passphrase is not { Length: > 0 })
         {
@@ -727,9 +726,12 @@ public static class SshPemParser
     {
         (bool encrypted, string? dekCipher, string? dekIvHex) = SplitLegacyHeaders(body, out ReadOnlySpan<byte> b64);
 
-        byte[] decoded = LenientBase64.Decode(b64);
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(LenientBase64.GetMaxDecodedLength(b64.Length));
         try
         {
+            int decodedLength = LenientBase64.Decode(b64, buffer);
+            Span<byte> decoded = buffer.AsSpan(0, decodedLength);
+
             if (!encrypted)
             {
                 // Unencrypted SEC1 — a supplied passphrase is silently
@@ -747,7 +749,8 @@ public static class SshPemParser
         }
         finally
         {
-            CryptographicOperations.ZeroMemory(decoded);
+            CryptographicOperations.ZeroMemory(buffer);
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 
@@ -986,9 +989,12 @@ public static class SshPemParser
     /// </summary>
     private static OpenSshKey ParsePkcs8Pem(ReadOnlySpan<byte> body)
     {
-        byte[] decoded = LenientBase64.Decode(body);
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(LenientBase64.GetMaxDecodedLength(body.Length));
         try
         {
+            int decodedLength = LenientBase64.Decode(body, buffer);
+            Span<byte> decoded = buffer.AsSpan(0, decodedLength);
+
             return ParsePkcs8PrivateKeyInfo(decoded);
         }
         catch (SshException ex) when (ex.ErrorCode == SshErrorCode.Proto)
@@ -1000,7 +1006,8 @@ public static class SshPemParser
         }
         finally
         {
-            CryptographicOperations.ZeroMemory(decoded);
+            CryptographicOperations.ZeroMemory(buffer);
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 
@@ -1019,9 +1026,12 @@ public static class SshPemParser
     /// </summary>
     private static OpenSshKey ParseEncryptedPkcs8Pem(ReadOnlySpan<byte> body, string? passphrase)
     {
-        byte[] decoded = LenientBase64.Decode(body);
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(LenientBase64.GetMaxDecodedLength(body.Length));
         try
         {
+            int decodedLength = LenientBase64.Decode(body, buffer);
+            Span<byte> decoded = buffer.AsSpan(0, decodedLength);
+
             return ParseEncryptedPkcs8Der(decoded, passphrase);
         }
         catch (SshException ex) when (ex.ErrorCode == SshErrorCode.Proto)
@@ -1033,7 +1043,8 @@ public static class SshPemParser
         }
         finally
         {
-            CryptographicOperations.ZeroMemory(decoded);
+            CryptographicOperations.ZeroMemory(buffer);
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 

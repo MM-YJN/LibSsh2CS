@@ -17,8 +17,8 @@ public class LenientBase64Tests
         byte[] src = System.Text.Encoding.ASCII.GetBytes("QUJDRA==");   // "ABCD"
         byte[] expected = System.Convert.FromBase64String("QUJDRA==");
 
-        Assert.Equal(expected, LenientBase64.Decode(src));
-        Assert.Equal(expected, LenientBase64.Decode("QUJDRA=="));
+        Assert.Equal(expected, Decode(src));
+        Assert.Equal(expected, Decode("QUJDRA=="));
     }
 
     [Theory]
@@ -35,8 +35,8 @@ public class LenientBase64Tests
     {
         byte[] expected = System.Text.Encoding.ASCII.GetBytes(expectedText);
 
-        Assert.Equal(expected, LenientBase64.Decode(b64));
-        Assert.Equal(expected, LenientBase64.Decode(System.Text.Encoding.ASCII.GetBytes(b64)));
+        Assert.Equal(expected, Decode(b64));
+        Assert.Equal(expected, Decode(System.Text.Encoding.ASCII.GetBytes(b64)));
     }
 
     [Theory]
@@ -44,7 +44,7 @@ public class LenientBase64Tests
     [InlineData("Q Q Q Q Q")]  // five sextets — still a lone leftover (5 % 4 == 1)
     public void Decode_LoneLeftoverSextet_ThrowsInval(string b64)
     {
-        SshException ex = Assert.Throws<SshException>(() => LenientBase64.Decode(b64));
+        SshException ex = Assert.Throws<SshException>(() => Decode(b64));
 
         Assert.Equal(SshErrorCode.Inval, ex.ErrorCode);
         Assert.Contains("Invalid base64", ex.Message);
@@ -53,8 +53,27 @@ public class LenientBase64Tests
     [Fact]
     public void Decode_EmptyInput_ReturnsEmpty()
     {
-        Assert.Empty(LenientBase64.Decode(""));
-        Assert.Empty(LenientBase64.Decode(ReadOnlySpan<byte>.Empty));
+        Assert.Empty(Decode(""));
+        Assert.Empty(Decode(ReadOnlySpan<byte>.Empty));
+    }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(1, 1)]
+    [InlineData(2, 2)]
+    [InlineData(3, 3)]
+    [InlineData(4, 3)]
+    [InlineData(5, 4)]
+    [InlineData(int.MaxValue, 1_610_612_736)]
+    public void GetMaxDecodedLength_ReturnsCeilingCapacity(int encodedLength, int expected)
+    {
+        Assert.Equal(expected, LenientBase64.GetMaxDecodedLength(encodedLength));
+    }
+
+    [Fact]
+    public void GetMaxDecodedLength_NegativeLength_Throws()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => LenientBase64.GetMaxDecodedLength(-1));
     }
 
     [Fact]
@@ -68,25 +87,21 @@ public class LenientBase64Tests
     }
 
     [Fact]
-    public void Decode_SpanOverload_DestinationOfSourceLength_NeverOverruns()
+    public void Decode_SpanOverload_DestinationOfMaximumLength_NeverOverruns()
     {
-        // Pins the documented contract: the destination must be at least
-        // src.Length bytes. A floor bound such as Base64.GetMaxDecodedLength
-        // (3·⌊L/4⌋ — the BCL strict decoder's bound) is up to 2 bytes short
-        // when an unpadded tail leaves a partial group, so callers must size
-        // from the input length, never the floor. Any write
-        // beyond a src.Length-sized destination throws
-        // IndexOutOfRangeException and fails this test.
+        // Pins the documented contract: GetMaxDecodedLength includes the staged
+        // byte for every possible partial trailing group. Any write beyond this
+        // exact maximum destination capacity fails this test.
         for (int length = 0; length <= 400; length++)
         {
             byte[] src = new byte[length];
             Array.Fill(src, (byte)'A');
-            byte[] destination = new byte[length];
+            byte[] destination = new byte[LenientBase64.GetMaxDecodedLength(length)];
 
             try
             {
                 int written = LenientBase64.Decode(src, destination);
-                Assert.InRange(written, 0, length);
+                Assert.InRange(written, 0, destination.Length);
             }
             catch (SshException ex)
             {
@@ -102,9 +117,10 @@ public class LenientBase64Tests
     /// BCL strict decoder's floor bound <c>Base64.GetMaxDecodedLength</c>
     /// (3·⌊L/4⌋) is genuinely too small for the lenient decoder's partial-tail
     /// writes — the overrun is deterministic (the array-backed span bounds
-    /// check fires). This documents why callers must size from
-    /// <c>src.Length</c>, and pins the floor-bound failure mode so any future
-    /// call site that reintroduces the floor bound is visibly wrong.
+    /// check fires). This documents why callers must use
+    /// <c>LenientBase64.GetMaxDecodedLength</c>, and pins the floor-bound failure
+    /// mode so any future call site that reintroduces the floor bound is visibly
+    /// wrong.
     /// </summary>
     [Theory]
     [InlineData(342)]   // n = 342 ≡ 2 (mod 4): last write at index 256, floor bound 255
@@ -119,5 +135,19 @@ public class LenientBase64Tests
         byte[] floorBoundDestination = new byte[Base64.GetMaxDecodedLength(length)];
 
         Assert.Throws<IndexOutOfRangeException>(() => LenientBase64.Decode(src, floorBoundDestination));
+    }
+
+    private static byte[] Decode(ReadOnlySpan<char> src)
+    {
+        byte[] output = new byte[LenientBase64.GetMaxDecodedLength(src.Length)];
+        int length = LenientBase64.Decode(src, output);
+        return output.AsSpan(0, length).ToArray();
+    }
+
+    private static byte[] Decode(ReadOnlySpan<byte> src)
+    {
+        byte[] output = new byte[LenientBase64.GetMaxDecodedLength(src.Length)];
+        int length = LenientBase64.Decode(src, output);
+        return output.AsSpan(0, length).ToArray();
     }
 }
