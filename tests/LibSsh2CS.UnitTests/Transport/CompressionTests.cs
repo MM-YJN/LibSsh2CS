@@ -1,3 +1,5 @@
+using System.Buffers;
+
 using LibSsh2CS.Transport;
 
 namespace LibSsh2CS.UnitTests.Transport;
@@ -45,8 +47,8 @@ public class CompressionTests
         using var comp = new NoneCompression();
         comp.Init(compress: true);
         byte[] data = { 1, 2, 3, 4, 5 };
-        Assert.Equal(data, comp.Compress(data));
-        Assert.Equal(data, comp.Decompress(data));
+        Assert.Equal(data, Compress(comp, data));
+        Assert.Equal(data, Decompress(comp, data));
     }
 
     // ── zlib round-trip ───────────────────────────────────────────────
@@ -60,8 +62,8 @@ public class CompressionTests
         comp.Init(compress: true);
         dec.Init(compress: false);
 
-        byte[] compressed = comp.Compress(payload);
-        byte[] restored = dec.Decompress(compressed);
+        byte[] compressed = Compress(comp, payload);
+        byte[] restored = Decompress(dec, compressed);
         Assert.Equal(payload, restored);
     }
 
@@ -74,7 +76,7 @@ public class CompressionTests
         using var comp = new ZlibCompression("zlib", useInAuth: true);
         comp.Init(compress: true);
 
-        byte[] compressed = comp.Compress(MakeText(100));
+        byte[] compressed = Compress(comp, MakeText(100));
         Assert.NotEmpty(compressed);
         Assert.Equal(0x78, compressed[0]);
     }
@@ -94,13 +96,13 @@ public class CompressionTests
         comp.Init(compress: true);
         dec.Init(compress: false);
 
-        byte[] c1 = comp.Compress(p1);
-        byte[] c2 = comp.Compress(p2);
-        byte[] c3 = comp.Compress(p3);
+        byte[] c1 = Compress(comp, p1);
+        byte[] c2 = Compress(comp, p2);
+        byte[] c3 = Compress(comp, p3);
 
-        Assert.Equal(p1, dec.Decompress(c1));
-        Assert.Equal(p2, dec.Decompress(c2));
-        Assert.Equal(p3, dec.Decompress(c3));
+        Assert.Equal(p1, Decompress(dec, c1));
+        Assert.Equal(p2, Decompress(dec, c2));
+        Assert.Equal(p3, Decompress(dec, c3));
     }
 
     [Fact]
@@ -115,15 +117,29 @@ public class CompressionTests
         comp.Init(compress: true);
         dec.Init(compress: false);
 
-        byte[] compressed = comp.Compress(payload);
-        Assert.Equal(payload, dec.Decompress(compressed));
+        byte[] compressed = Compress(comp, payload);
+        Assert.Equal(payload, Decompress(dec, compressed));
     }
 
     [Fact]
     public void Zlib_CompressBeforeInit_Throws()
     {
         using var comp = new ZlibCompression("zlib", useInAuth: true);
-        Assert.Throws<InvalidOperationException>(() => comp.Compress(new byte[10]));
+        Assert.Throws<InvalidOperationException>(() => Compress(comp, new byte[10]));
+    }
+
+    private static byte[] Compress(ICompression comp, byte[] data)
+    {
+        var writer = new ArrayBufferWriter<byte>(data.Length + 64);
+        comp.Compress(data, writer);
+        return writer.WrittenSpan.ToArray();
+    }
+
+    private static byte[] Decompress(ICompression comp, byte[] data)
+    {
+        var writer = new ArrayBufferWriter<byte>(Math.Max(data.Length * 4, 64));
+        comp.Decompress(data, writer);
+        return writer.WrittenSpan.ToArray();
     }
 
     private static byte[] MakeText(int length)

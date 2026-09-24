@@ -1,14 +1,18 @@
+using System.Buffers;
+
 using BenchmarkDotNet.Attributes;
 
 using LibSsh2CS.Transport;
+using LibSsh2CS.Util;
 
 namespace LibSsh2CS.Benchmarks.Transport;
 
 /// <summary>
-/// Isolates the per-packet buffers of <see cref="ZlibCompression"/>. Both
-/// directions currently allocate an <c>ArrayBufferWriter</c> plus a
-/// <c>ToArray</c> result on every call; the hot-path optimization replaces
-/// those with pooled/caller-owned buffers.
+/// Isolates the per-packet buffers of <see cref="ZlibCompression"/>. The
+/// compressor now appends into a caller-owned <see cref="IBufferWriter{Byte}"/>;
+/// this benchmark reuses one pooled writer across iterations (the packet
+/// layer's steady state) so the allocation figure reflects the codec work, not
+/// a per-call output buffer.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -40,6 +44,8 @@ public class CompressionBenchmarks
     private ZlibCompression _compressor = null!;
     private ZlibCompression _decompressor = null!;
     private byte[] _payload = null!;
+    private PooledByteBufferWriter _writer = null!;
+    private PooledByteBufferWriter _readWriter = null!;
 
     [GlobalSetup]
     public void Setup()
@@ -49,6 +55,8 @@ public class CompressionBenchmarks
         _compressor.Init(compress: true);
         _decompressor = new ZlibCompression("zlib", useInAuth: true);
         _decompressor.Init(compress: false);
+        _writer = new PooledByteBufferWriter(PayloadSize + 64);
+        _readWriter = new PooledByteBufferWriter(PayloadSize + 64);
     }
 
     [GlobalCleanup]
@@ -56,15 +64,26 @@ public class CompressionBenchmarks
     {
         _compressor.Dispose();
         _decompressor.Dispose();
+        _writer.Dispose();
+        _readWriter.Dispose();
     }
 
     [Benchmark]
-    public int Compress() => _compressor.Compress(_payload).Length;
+    public int Compress()
+    {
+        _writer.ResetWrittenCount();
+        _compressor.Compress(_payload, _writer);
+        return _writer.WrittenCount;
+    }
 
     [Benchmark]
     public int RoundTrip()
     {
-        byte[] compressed = _compressor.Compress(_payload);
-        return _decompressor.Decompress(compressed).Length;
+        _writer.ResetWrittenCount();
+        _compressor.Compress(_payload, _writer);
+
+        _readWriter.ResetWrittenCount();
+        _decompressor.Decompress(_writer.WrittenSpan, _readWriter);
+        return _readWriter.WrittenCount;
     }
 }

@@ -231,18 +231,18 @@ public class DelayedCompressionActivationTests
         {
         }
 
-        public byte[] Compress(ReadOnlySpan<byte> src)
+        public void Compress(ReadOnlySpan<byte> src, IBufferWriter<byte> destination)
         {
             byte[] snap = src.ToArray();
             CompressCalls.Add(snap);
-            return snap;
+            destination.Write(snap);
         }
 
-        public byte[] Decompress(ReadOnlySpan<byte> src)
+        public void Decompress(ReadOnlySpan<byte> src, IBufferWriter<byte> destination)
         {
             byte[] snap = src.ToArray();
             DecompressCalls.Add(snap);
-            return snap;
+            destination.Write(snap);
         }
 
         public void Dispose()

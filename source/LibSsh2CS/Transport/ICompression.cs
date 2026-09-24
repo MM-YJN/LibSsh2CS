@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.IO.Compression;
 
 namespace LibSsh2CS.Transport;
@@ -47,13 +48,23 @@ internal interface ICompression : IDisposable
     /// <summary>
     /// Compresses one packet's payload. Port of <c>comp_method-&gt;comp</c>
     /// (<c>comp_method_zlib_comp</c> with <c>Z_PARTIAL_FLUSH</c>). Dictionary state
-    /// persists across calls on the same instance.
+    /// persists across calls on the same instance. The compressed bytes are
+    /// appended to <paramref name="destination"/>, whose backing storage is
+    /// owned by the caller (which can therefore pool it across packets).
     /// </summary>
-    byte[] Compress(ReadOnlySpan<byte> src);
+    /// <param name="src">The packet payload to compress.</param>
+    /// <param name="destination">Receives the compressed bytes, appended at the
+    /// writer's current position.</param>
+    void Compress(ReadOnlySpan<byte> src, IBufferWriter<byte> destination);
 
     /// <summary>
     /// Decompresses one packet's payload. Port of <c>comp_method-&gt;decomp</c>
     /// (<c>comp_method_zlib_decomp</c>). Dictionary state persists across calls.
+    /// The decompressed bytes are appended to <paramref name="destination"/>,
+    /// whose backing storage is owned by the caller.
     /// </summary>
-    byte[] Decompress(ReadOnlySpan<byte> src);
+    /// <param name="src">The compressed packet payload.</param>
+    /// <param name="destination">Receives the decompressed bytes, appended at
+    /// the writer's current position.</param>
+    void Decompress(ReadOnlySpan<byte> src, IBufferWriter<byte> destination);
 }

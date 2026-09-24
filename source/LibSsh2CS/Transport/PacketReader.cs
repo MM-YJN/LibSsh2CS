@@ -3,6 +3,8 @@ using System.Buffers.Binary;
 using System.IO.Pipelines;
 using System.Security.Cryptography;
 
+using LibSsh2CS.Util;
+
 namespace LibSsh2CS.Transport;
 
 /// <summary>
@@ -149,7 +151,9 @@ internal sealed class PacketReader : IAsyncDisposable
         // Clear any stashed partial first-block decrypt from the
         // previous key era. The decrypt was done under the old cipher; reusing
         // it under the new cipher would corrupt the stream.
-        _pendingFirstBlock = null;
+        ReturnFirstBlock(_firstBlockPlain);
+        _firstBlockPlain = null;
+        _firstBlockPlainValid = false;
     }
 
     /// <summary>
@@ -277,8 +281,14 @@ internal sealed class PacketReader : IAsyncDisposable
         // ── Length recovery ────────────────────────────────────────────
         // Each family recovers the 4-byte packet_length differently.
         uint wireLength;
-        int headerBytes;
         byte[]? firstBlockPlain = null; // standard path keeps the decrypted first block.
+        // Locally-owned pooled first block, returned in the finally below. When
+        // a partial packet is seen it is transferred to the _firstBlockPlain
+        // stash instead (so the cipher is not advanced twice on the retry).
+        byte[]? firstBlockRented = null;
+        // True when this call consumed the stashed first block (which must then
+        // be released once the full packet is processed).
+        bool firstBlockConsumed = false;
 
         if (etm)
         {
@@ -291,67 +301,74 @@ internal sealed class PacketReader : IAsyncDisposable
             Span<byte> lenBuf = stackalloc byte[4];
             buffer.Slice(0, 4).CopyTo(lenBuf);
             wireLength = BinaryPrimitives.ReadUInt32BigEndian(lenBuf);
-            headerBytes = 4;
-        }
-        else if (cipher.TryGetLength(_seqno,
-            buffer.Slice(0, (int)Math.Min(4, buffer.Length)).ToArray(), out wireLength))
-        {
-            // ChaCha20-Poly1305 (header-key decrypt) or AES-GCM (length is plaintext AAD).
-            headerBytes = 4;
         }
         else
         {
-            // Standard (AES-CBC/CTR): length is encrypted in the first block.
-            // transport.c:572-598. Decrypt the first block ONCE to learn the
-            // length; keep the plaintext (the MAC later covers it). The cipher
-            // state advances by one block — the remaining blocks decrypt in a
-            // second Crypt call below.
-            int blocksize = cipher.BlockSize;
-            if (buffer.Length < blocksize)
+            int available = (int)Math.Min(4, buffer.Length);
+            Span<byte> lenBuf = stackalloc byte[4];
+            buffer.Slice(0, available).CopyTo(lenBuf);
+            if (cipher.TryGetLength(_seqno, lenBuf.Slice(0, available), out wireLength))
             {
-                return false;
-            }
-
-            // Reuse a previously-decrypted first block if present.
-            // The previous code unconditionally called cipher.Crypt() here,
-            // which advanced the cipher state (CBC IV / CTR counter) by one
-            // block. If a partial packet was buffered, the next call would
-            // decrypt the SAME first block again — double-advancing the state
-            // and corrupting the stream (MAC failure). The non-blocking
-            // TryReadPacket made this much more likely: a partial packet
-            // arriving would be decrypted twice (once by TryReadPacket via
-            // DrainAvailablePacketsAsync, once by the next blocking
-            // ReadPacketAsync). The fix stashes the decrypted first block in
-            // _pendingFirstBlock and reuses it on the next call so cipher.Crypt
-            // is called exactly once per packet.
-            if (_pendingFirstBlock is not null && _pendingFirstBlock.Length == blocksize)
-            {
-                firstBlockPlain = _pendingFirstBlock;
-                wireLength = BinaryPrimitives.ReadUInt32BigEndian(firstBlockPlain);
+                // ChaCha20-Poly1305 (header-key decrypt) or AES-GCM (length is plaintext AAD).
             }
             else
             {
-                // First decrypt of this first block. If we end up returning
-                // false below (not enough data for the full packet), we'll
-                // stash firstBlockPlain in _pendingFirstBlock so the next
-                // call skips the decrypt.
-                firstBlockPlain = buffer.Slice(0, blocksize).ToArray();
-                cipher.Crypt(firstBlockPlain);
-                wireLength = BinaryPrimitives.ReadUInt32BigEndian(firstBlockPlain);
-            }
+                // Standard (AES-CBC/CTR): length is encrypted in the first block.
+                // transport.c:572-598. Decrypt the first block ONCE to learn the
+                // length; keep the plaintext (the MAC later covers it). The cipher
+                // state advances by one block — the remaining blocks decrypt in a
+                // second Crypt call below.
+                int blocksize = cipher.BlockSize;
+                if (buffer.Length < blocksize)
+                {
+                    return false;
+                }
 
-            headerBytes = blocksize;
+                // Reuse a previously-decrypted first block if present.
+                // The previous code unconditionally called cipher.Crypt() here,
+                // which advanced the cipher state (CBC IV / CTR counter) by one
+                // block. If a partial packet was buffered, the next call would
+                // decrypt the SAME first block again — double-advancing the state
+                // and corrupting the stream (MAC failure). The non-blocking
+                // TryReadPacket made this much more likely: a partial packet
+                // arriving would be decrypted twice (once by TryReadPacket via
+                // DrainAvailablePacketsAsync, once by the next blocking
+                // ReadPacketAsync). The fix stashes the decrypted first block in
+                // _firstBlockPlain and reuses it on the next call so cipher.Crypt
+                // is called exactly once per packet.
+                if (_firstBlockPlainValid && _firstBlockPlain is not null)
+                {
+                    firstBlockPlain = _firstBlockPlain;
+                    firstBlockConsumed = true;
+                    wireLength = BinaryPrimitives.ReadUInt32BigEndian(firstBlockPlain);
+                }
+                else
+                {
+                    // First decrypt of this first block. If we end up returning
+                    // false below (not enough data for the full packet), we'll
+                    // stash firstBlockPlain in _firstBlockPlain so the next
+                    // call skips the decrypt. The pooled array (never shorter
+                    // than blocksize) avoids a per-partial-read allocation.
+                    firstBlockRented = ArrayPool<byte>.Shared.Rent(blocksize);
+                    buffer.Slice(0, blocksize).CopyTo(firstBlockRented);
+                    cipher.Crypt(firstBlockRented.AsSpan(0, blocksize));
+                    firstBlockPlain = firstBlockRented;
+                    wireLength = BinaryPrimitives.ReadUInt32BigEndian(firstBlockPlain);
+                }
+            }
         }
 
         // ── Bounds check 1: packet_length (transport.c:600-605) ────────
         if (wireLength < 1)
         {
+            ReturnFirstBlock(firstBlockRented);
             throw new SshException(SshErrorCode.Decrypt,
                 $"packet_length {wireLength} < 1");
         }
 
         if (wireLength > MaxPayload)
         {
+            ReturnFirstBlock(firstBlockRented);
             throw new SshException(SshErrorCode.OutOfBoundary,
                 $"packet_length {wireLength} > {MaxPayload}");
         }
@@ -403,98 +420,157 @@ internal sealed class PacketReader : IAsyncDisposable
 
         if (totalNum is 0 or > MaxPayload)
         {
+            ReturnFirstBlock(firstBlockRented);
             throw new SshException(SshErrorCode.OutOfBoundary,
                 $"total_num {totalNum} out of bounds");
         }
 
         if (buffer.Length < totalWire)
         {
-            // Not enough data yet for the full packet. Stash the decrypted
-            // first block (standard-cipher path only — AEAD/ETM don't decrypt
-            // the first block for length recovery, so firstBlockPlain is null
-            // for them). On the next call, we reuse it instead of re-decrypting
-            // — which would double-advance the cipher state (CBC IV / CTR
-            // counter) and corrupt the stream.
-            _pendingFirstBlock = firstBlockPlain;
+            // Not enough data yet for the full packet. Transfer the decrypted
+            // first block to the stash (standard-cipher path only — AEAD/ETM
+            // don't decrypt the first block for length recovery, so
+            // firstBlockPlain is null for them). On the next call, we reuse it
+            // instead of re-decrypting — which would double-advance the cipher
+            // state (CBC IV / CTR counter) and corrupt the stream. The rented
+            // array becomes the property of the stash and is returned after
+            // the packet completes (or at DisposeAsync).
+            if (firstBlockRented is not null)
+            {
+                _firstBlockPlain = firstBlockRented;
+                _firstBlockPlainValid = true;
+                firstBlockRented = null;
+            }
+
             return false;
         }
 
-        // Full packet available — commit.
-        byte[] wire = buffer.Slice(0, totalWire).ToArray();
-        consumedTo = buffer.GetPosition(totalWire);
-
-        // Clear any stashed partial (we have the full packet now).
-        _pendingFirstBlock = null;
-
-        // ── Per-family decrypt + verify + extract ─────────────────────
-        byte[] plaintext;
-        int paddingLength;
-        if (etm)
+        // Full packet available — commit. Copy the wire frame into a pooled
+        // buffer (the pipe's memory is only valid until the next AdvanceTo);
+        // it is returned in the finally below. Each per-family helper decrypts
+        // in place (or into a reused scratch, for AEAD) and produces the final
+        // caller-owned payload array directly, so the only per-packet
+        // allocation is that one payload array.
+        byte[] wire = ArrayPool<byte>.Shared.Rent(totalWire);
+        byte[]? consumedFirstBlock = null;
+        try
         {
-            plaintext = ReadEtm(wire, (int)wireLength, macLen, out paddingLength);
+            buffer.Slice(0, totalWire).CopyTo(wire);
+            consumedTo = buffer.GetPosition(totalWire);
+
+            // The stashed first block (if this call consumed one) is released
+            // in the finally; clear the stash so it is never reused.
+            if (firstBlockConsumed)
+            {
+                consumedFirstBlock = _firstBlockPlain;
+                _firstBlockPlain = null;
+                _firstBlockPlainValid = false;
+            }
+
+            // ── Per-family decrypt + verify + extract ─────────────────────
+            // Each helper validates padding_length and returns the payload
+            // starting at the type byte.
+            byte[] payload;
+            if (etm)
+            {
+                payload = ReadEtm(wire, (int)wireLength, macLen);
+            }
+            else if (isAead)
+            {
+                payload = ReadAead(wire, (int)wireLength, authLen);
+            }
+            else
+            {
+                payload = ReadStandard(wire, (int)wireLength, macLen, firstBlockPlain!);
+            }
+
+            int type = payload.Length > 0 ? payload[0] : -1;
+
+            // ── Decompress (transport.c:292-318) ───────────────────────────
+            // Per-packet predicate (transport.c:292-295): active iff encrypted
+            // AND (authenticated OR use_in_auth). The flag is set at NEWKEYS from
+            // (Compresses && UseInAuth) by SetInboundKeys, then flipped to true
+            // after auth by ActivateDelayedCompression (called from
+            // SshSession.MarkAuthenticated for zlib@openssh.com).
+            if (_compressionActive && _compression is not null && _compression.Compresses)
+            {
+                _decompressScratch.ResetWrittenCount();
+                _compression.Decompress(payload, _decompressScratch);
+                payload = _decompressScratch.WrittenSpan.ToArray();
+                type = payload.Length > 0 ? payload[0] : -1;
+            }
+
+            // ── seqno increment + strict-KEX NEWKEYS reset (transport.c:286, 342-345) ──
+            // The packet records the seqno it was received under (pre-reset), so
+            // the caller can observe the strict-KEX NEWKEYS reset.
+            uint seqno = _seqno;
+            _seqno++;
+            if (_strictKex && type == PacketType.NewKeys)
+            {
+                _seqno = 0;
+            }
+
+            // ── Rekey counters ───────────────────────────────
+            // Bump wire-byte + packet counts for the inbound direction. Reset to 0
+            // in SetInboundKeys at the NEWKEYS transition. totalWire covers the
+            // full encrypted frame (length + ciphertext + MAC/tag), which is what
+            // RFC 4253 §9's sequence-space limit concerns.
+            _inboundBytes += totalWire;
+            _inboundPackets++;
+
+            packet = new RawPacket(type, payload, seqno);
+            return true;
         }
-        else if (isAead)
+        finally
         {
-            plaintext = ReadAead(wire, (int)wireLength, authLen, out paddingLength);
+            // The wire buffer may hold decrypted plaintext or (for ETM/AEAD)
+            // ciphertext; clear the used portion before returning it.
+            CryptographicOperations.ZeroMemory(wire.AsSpan(0, totalWire));
+            ArrayPool<byte>.Shared.Return(wire);
+            ReturnFirstBlock(firstBlockRented);
+            ReturnFirstBlock(consumedFirstBlock);
         }
-        else
+    }
+
+    /// <summary>
+    /// Zeroes and returns a rented first-block buffer to the pool when it is
+    /// non-null. Buffers transferred to the stash are left alone (the local is
+    /// nulled by the transfer), so a buffer is never returned twice.
+    /// </summary>
+    private static void ReturnFirstBlock(byte[]? firstBlock)
+    {
+        if (firstBlock is not null)
         {
-            plaintext = ReadStandard(wire, (int)wireLength, macLen,
-                firstBlockPlain!, out paddingLength);
+            CryptographicOperations.ZeroMemory(firstBlock);
+            ArrayPool<byte>.Shared.Return(firstBlock);
         }
-
-        // ── Bounds check 3: padding_length (transport.c:620-623, 819-821) ──
-        if (paddingLength > (int)wireLength - 1)
-        {
-            throw new SshException(SshErrorCode.Decrypt,
-                $"padding_length {paddingLength} > packet_length-1 {wireLength - 1}");
-        }
-
-        // ── Strip padding (transport.c:289) ────────────────────────────
-        int payloadLen = (int)wireLength - 1 - paddingLength;
-        byte[] payload = new byte[payloadLen];
-        Buffer.BlockCopy(plaintext, 0, payload, 0, payloadLen);
-
-        // ── Decompress (transport.c:292-318) ───────────────────────────
-        // Per-packet predicate (transport.c:292-295): active iff encrypted
-        // AND (authenticated OR use_in_auth). The flag is set at NEWKEYS from
-        // (Compresses && UseInAuth) by SetInboundKeys, then flipped to true
-        // after auth by ActivateDelayedCompression (called from
-        // SshSession.MarkAuthenticated for zlib@openssh.com).
-        if (_compressionActive && _compression is not null && _compression.Compresses)
-        {
-            payload = _compression.Decompress(payload);
-        }
-
-        int type = payload.Length > 0 ? payload[0] : -1;
-        uint seqno = _seqno;
-
-        // ── seqno increment + strict-KEX NEWKEYS reset (transport.c:286, 342-345) ──
-        _seqno++;
-        if (_strictKex && type == PacketType.NewKeys)
-        {
-            _seqno = 0;
-        }
-
-        // ── Rekey counters ───────────────────────────────
-        // Bump wire-byte + packet counts for the inbound direction. Reset to 0
-        // in SetInboundKeys at the NEWKEYS transition. totalWire covers the
-        // full encrypted frame (length + ciphertext + MAC/tag), which is what
-        // RFC 4253 §9's sequence-space limit concerns.
-        _inboundBytes += totalWire;
-        _inboundPackets++;
-
-        packet = new RawPacket(type, payload, seqno);
-        return true;
     }
 
     /// <summary>
     /// Stashed first-block plaintext from a previous partial read of a standard
     /// cipher packet. Reused on the next call so the first block is decrypted
     /// exactly once (matching libssh2's <c>p->init[]</c> persistence across
-    /// EAGAIN returns). <c>null</c> when no partial is pending.
+    /// EAGAIN returns). Cleared once the full packet is consumed or a new key
+    /// is installed.
     /// </summary>
-    private byte[]? _pendingFirstBlock;
+    private byte[]? _firstBlockPlain;
+
+    /// <summary>True when <see cref="_firstBlockPlain"/> holds a valid stashed block.</summary>
+    private bool _firstBlockPlainValid;
+
+    /// <summary>
+    /// Per-packet decompression destination, reused across packets. Carries
+    /// plaintext, so it is zeroed before it returns to the pool.
+    /// </summary>
+    private readonly PooledByteBufferWriter _decompressScratch = new(4096) { ClearOnReturn = true };
+
+    /// <summary>
+    /// Per-packet AEAD plaintext scratch, reused across packets. AES-GCM does
+    /// not permit overlapping src/dest, so the plaintext cannot be decrypted
+    /// into the ciphertext frame buffer; this reused buffer carries it (and
+    /// plaintext, so it is zeroed before returning to the pool).
+    /// </summary>
+    private readonly PooledByteBufferWriter _aeadScratch = new(4096) { ClearOnReturn = true };
 
     private bool TryReadCleartext(ReadOnlySequence<byte> buffer, out RawPacket packet,
         out SequencePosition consumedTo)
@@ -571,11 +647,12 @@ internal sealed class PacketReader : IAsyncDisposable
     /// <summary>
     /// Standard (AES-CBC/CTR + separate HMAC): the first block was already
     /// decrypted for length recovery (its plaintext in <paramref name="firstBlockPlain"/>);
-    /// decrypt the remaining blocks, verify MAC over the full plaintext body,
-    /// strip padding. transport.c:197-229 (MAC), 741-832 (decrypt).
+    /// decrypt the remaining blocks in place over the wire frame, verify the MAC
+    /// over the full plaintext body, validate padding, and return the payload.
+    /// transport.c:197-229 (MAC), 741-832 (decrypt).
     /// </summary>
     private byte[] ReadStandard(byte[] wire, int wireLength, int macLen,
-        byte[] firstBlockPlain, out int paddingLength)
+        byte[] firstBlockPlain)
     {
         ICipher cipher = _cipher!;
         int blocksize = cipher.BlockSize;
@@ -605,23 +682,19 @@ internal sealed class PacketReader : IAsyncDisposable
                 $"packet body {bodyLen} + mac {macLen} bytes < blocksize {blocksize}");
         }
 
-        // Build the full plaintext body: first block (already decrypted) +
-        // remaining blocks (decrypt now). The cipher state advanced by one
-        // block during length recovery; the remaining decrypt continues from
-        // there, matching libssh2's incremental decrypt. The copy is clamped
-        // to bodyLen: with a MAC in play C accepts sub-block bodies
+        // Build the full plaintext body in place: first block (already
+        // decrypted) + remaining blocks (decrypt now). The cipher state advanced
+        // by one block during length recovery; the remaining decrypt continues
+        // from there, matching libssh2's incremental decrypt. The copy is
+        // clamped to bodyLen: with a MAC in play C accepts sub-block bodies
         // (bodyLen < blocksize <= bodyLen + macLen) — the body then lies
         // entirely inside the first block and nothing is left to decrypt.
-        byte[] body = new byte[bodyLen];
-        Buffer.BlockCopy(firstBlockPlain, 0, body, 0, Math.Min(blocksize, bodyLen));
+        Span<byte> body = wire.AsSpan(0, bodyLen);
+        firstBlockPlain.AsSpan(0, Math.Min(blocksize, bodyLen)).CopyTo(body);
 
         if (bodyLen > blocksize)
         {
-            int remaining = bodyLen - blocksize;
-            byte[] rest = new byte[remaining];
-            Buffer.BlockCopy(wire, blocksize, rest, 0, remaining);
-            cipher.Crypt(rest);
-            Buffer.BlockCopy(rest, 0, body, blocksize, remaining);
+            cipher.Crypt(body.Slice(blocksize));
         }
 
         // MAC over BE32(seqno) ‖ body (full plaintext: length+padlen+payload+padding).
@@ -638,22 +711,24 @@ internal sealed class PacketReader : IAsyncDisposable
             }
         }
 
-        paddingLength = body[4];
-        // Return the payload starting after the 4-byte length + 1-byte padlen
-        // (body[5..]) so TryReadPacket's payload extraction is uniform with the
-        // other families (which also return plaintext starting at the type byte).
-        byte[] shifted = new byte[bodyLen - 5];
-        Buffer.BlockCopy(body, 5, shifted, 0, bodyLen - 5);
-        return shifted;
+        // The payload starts after the 4-byte length + 1-byte padlen (body[5..]).
+        int paddingLength = body[4];
+        if (paddingLength > wireLength - 1)
+        {
+            throw new SshException(SshErrorCode.Decrypt,
+                $"padding_length {paddingLength} > packet_length-1 {wireLength - 1}");
+        }
+
+        return ExtractPayload(body, payloadStart: 5, paddingLength);
     }
 
     /// <summary>
     /// ETM (hmac-*-etm): length is plaintext; verify MAC over the ciphertext
-    /// (incl. the plaintext length field); decrypt the body (skipping the 4-byte
-    /// length); strip padding. transport.c:206-279.
+    /// (incl. the plaintext length field); decrypt the body in place over the
+    /// wire frame (skipping the 4-byte length), validate padding, and return the
+    /// payload. transport.c:206-279.
     /// </summary>
-    private byte[] ReadEtm(byte[] wire, int wireLength, int macLen,
-        out int paddingLength)
+    private byte[] ReadEtm(byte[] wire, int wireLength, int macLen)
     {
         ICipher cipher = _cipher!;
 
@@ -672,31 +747,40 @@ internal sealed class PacketReader : IAsyncDisposable
         }
 
         // Decrypt the body (skip the 4 plaintext length bytes). transport.c:235-279.
-        byte[] body = new byte[wireLength];
-        Buffer.BlockCopy(wire, 4, body, 0, wireLength);
-        cipher.Crypt(body.AsSpan(0, wireLength));
+        Span<byte> body = wire.AsSpan(4, wireLength);
+        cipher.Crypt(body);
 
         // The first decrypted byte is padding_length (transport.c:260).
-        paddingLength = body[0];
-        // The payload starts at body[1] (after padding_length byte). Shift left
-        // by 1 (transport.c:281-283) so the returned body starts at the type byte.
-        byte[] shifted = new byte[wireLength - 1];
-        Buffer.BlockCopy(body, 1, shifted, 0, wireLength - 1);
-        return shifted;
+        int paddingLength = body[0];
+        if (paddingLength > wireLength - 1)
+        {
+            throw new SshException(SshErrorCode.Decrypt,
+                $"padding_length {paddingLength} > packet_length-1 {wireLength - 1}");
+        }
+
+        // The payload starts at body[1] (after padding_length byte); shift left
+        // by 1 (transport.c:281-283) so the returned payload starts at the type byte.
+        return ExtractPayload(body, payloadStart: 1, paddingLength);
     }
 
     /// <summary>
     /// AEAD (AES-GCM, ChaCha20-Poly1305): single CryptAead call verifies the
     /// tag and decrypts. The 4-byte length is AAD (GCM) or header-key-encrypted
-    /// (ChaCha). transport.c:791-821 + fullpacket ChaCha path.
+    /// (ChaCha). AES-GCM forbids overlapping src/dest, so the plaintext lands in
+    /// a reused scratch; validate padding and return the payload.
+    /// transport.c:791-821 + fullpacket ChaCha path.
     /// </summary>
-    private byte[] ReadAead(byte[] wire, int wireLength, int authLen,
-        out int paddingLength)
+    private byte[] ReadAead(byte[] wire, int wireLength, int authLen)
     {
         ICipher cipher = _cipher!;
         int aadLen = 4;
         int payloadLen = wireLength; // = 1 (padlen) + payload + padding
-        byte[] dest = new byte[aadLen + payloadLen];
+
+        // Reused scratch: no per-packet destination allocation. AES-GCM's
+        // decrypt writes into a disjoint destination; ChaCha20-Poly1305 could
+        // decrypt in place, but sharing one buffer keeps the path uniform.
+        _aeadScratch.ResetWrittenCount();
+        Span<byte> dest = _aeadScratch.GetSpan(aadLen + payloadLen);
         // On decrypt, CryptAead reads src = [aadLen+payloadLen ciphertext] +
         // [authLen tag] (the tag is at wire[aadLen+payloadLen..+authLen-1]).
         // src must span the full aadLen + payloadLen + authLen bytes.
@@ -704,11 +788,38 @@ internal sealed class PacketReader : IAsyncDisposable
             payloadLen, aadLen, encrypt: false);
 
         // The first byte of the decrypted body is padding_length (transport.c:281).
-        paddingLength = dest[aadLen];
-        // Payload starts after the padding_length byte.
-        byte[] body = new byte[payloadLen - 1];
-        Buffer.BlockCopy(dest, aadLen + 1, body, 0, payloadLen - 1);
-        return body;
+        // wireLength >= 1 was enforced by the packet_length bounds check above,
+        // so dest always carries the padding-length byte.
+        int paddingLength = dest[aadLen];
+        if (paddingLength > wireLength - 1)
+        {
+            throw new SshException(SshErrorCode.Decrypt,
+                $"padding_length {paddingLength} > packet_length-1 {wireLength - 1}");
+        }
+
+        return ExtractPayload(dest.Slice(0, aadLen + payloadLen), payloadStart: 5, paddingLength);
+    }
+
+    /// <summary>
+    /// Copies the payload out of a decrypted plaintext body that begins at the
+    /// 4-byte length field (standard/AEAD layout,
+    /// <c>[4-byte length][1-byte padding_length][payload][padding]</c>) or after
+    /// the 4-byte length has already been stripped (ETM layout,
+    /// <c>[1-byte padding_length][payload][padding]</c>). Returns a fresh
+    /// caller-owned array — the one allocation per packet that
+    /// <see cref="RawPacket.Payload"/>'s ownership contract requires.
+    /// </summary>
+    private static byte[] ExtractPayload(ReadOnlySpan<byte> body, int payloadStart, int paddingLength)
+    {
+        int payloadLen = body.Length - payloadStart - paddingLength;
+        if (payloadLen <= 0)
+        {
+            return [];
+        }
+
+        byte[] payload = new byte[payloadLen];
+        body.Slice(payloadStart, payloadLen).CopyTo(payload);
+        return payload;
     }
 
     public ValueTask DisposeAsync()
@@ -716,6 +827,11 @@ internal sealed class PacketReader : IAsyncDisposable
         _cipher?.Dispose();
         _mac?.Dispose();
         _compression?.Dispose();
+        ReturnFirstBlock(_firstBlockPlain);
+        _firstBlockPlain = null;
+        _firstBlockPlainValid = false;
+        _decompressScratch.Dispose();
+        _aeadScratch.Dispose();
         return default;
     }
 }

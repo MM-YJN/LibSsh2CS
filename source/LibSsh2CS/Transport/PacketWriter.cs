@@ -2,6 +2,8 @@ using System.Buffers.Binary;
 using System.IO.Pipelines;
 using System.Security.Cryptography;
 
+using LibSsh2CS.Util;
+
 namespace LibSsh2CS.Transport;
 
 /// <summary>
@@ -94,6 +96,16 @@ internal sealed class PacketWriter : IAsyncDisposable
     // underlying PipeWriter. Held across the full frame+encrypt+flush+seqno
     // sequence so on-wire ordering matches call ordering.
     private readonly SemaphoreSlim _writeLock = new(1, 1);
+
+    // ── Per-packet scratch buffers ─────────────────────
+    // Reused across packets under _writeLock, so the steady-state framing path
+    // performs no heap allocation. _compressScratch receives the compressor
+    // output (only touched when compression is active); _frameScratch holds the
+    // laid-out wire packet up to and including the MAC/tag. The frame buffer is
+    // the one handed to the PipeWriter, so it must stay valid until the flush
+    // completes — the writer does not return it until DisposeAsync.
+    private readonly PooledByteBufferWriter _compressScratch = new(1024) { ClearOnReturn = true };
+    private readonly PooledByteBufferWriter _frameScratch = new(4096) { ClearOnReturn = true };
 
     /// <summary>
     /// Constructs a writer over the given <see cref="PipeWriter"/>. The writer
@@ -244,29 +256,40 @@ internal sealed class PacketWriter : IAsyncDisposable
             // from (Compresses && UseInAuth) by SetOutboundKeysAsync, then
             // flipped to true after auth by ActivateDelayedCompression (called
             // from SshSession.MarkAuthenticated for zlib@openssh.com).
-            byte[] body = payload.ToArray();
-            if (_encrypted && _compressionActive && _compression is not null
-                && _compression.Compresses)
+            //
+            // The compressed body goes into a reused pooled writer; the
+            // uncompressed fast path frames straight out of the caller's
+            // payload (no payload copy at all).
+            bool compressed = _encrypted && _compressionActive && _compression is not null
+                && _compression.Compresses;
+            int bodyLength;
+            if (compressed)
             {
-                body = _compression.Compress(body);
+                _compressScratch.ResetWrittenCount();
+                _compression!.Compress(payload.Span, _compressScratch);
+                bodyLength = _compressScratch.WrittenCount;
 
                 // Parity transport.c:1065-1078: the compressed output is
                 // budgeted at MAX_SSH_PACKET_LEN-5-256 (34739) — an
                 // incompressible payload that overflows the budget is a
                 // LIBSSH2_ERROR_ZLIB "compression failure", NOT an oversized
                 // packet.
-                if (body.Length > MaxCompressedPayload)
+                if (bodyLength > MaxCompressedPayload)
                 {
                     throw new SshException(SshErrorCode.Zlib, "compression failure");
                 }
             }
-            else if (body.Length >= MaxUncompressedPayload)
+            else
             {
-                // Parity transport.c:1099-1102: an uncompressed payload of
-                // MAX_SSH_PACKET_LEN-0x100 (34744) bytes or more is rejected
-                // with LIBSSH2_ERROR_INVAL "too large packet". Previously the
-                // port framed and sent any size.
-                throw new SshException(SshErrorCode.Inval, "too large packet");
+                bodyLength = payload.Length;
+                if (bodyLength >= MaxUncompressedPayload)
+                {
+                    // Parity transport.c:1099-1102: an uncompressed payload of
+                    // MAX_SSH_PACKET_LEN-0x100 (34744) bytes or more is rejected
+                    // with LIBSSH2_ERROR_INVAL "too large packet". Previously the
+                    // port framed and sent any size.
+                    throw new SshException(SshErrorCode.Inval, "too large packet");
+                }
             }
 
             // ── 2. Determine framing parameters ────────────────────────────
@@ -287,7 +310,7 @@ internal sealed class PacketWriter : IAsyncDisposable
                 ? 4 : 0;
 
             // padding_length: pad to blocksize, minimum 4 bytes.
-            int packetLengthWithHeader = body.Length + 1 + 4;
+            int packetLengthWithHeader = bodyLength + 1 + 4;
             int paddingLength = blocksize - ((packetLengthWithHeader - cryptOffset) % blocksize);
             if (paddingLength < 4)
             {
@@ -295,7 +318,7 @@ internal sealed class PacketWriter : IAsyncDisposable
             }
 
             // The SSH wire packet_length field value (excludes its own 4 bytes).
-            int wirePacketLength = body.Length + 1 + paddingLength;
+            int wirePacketLength = bodyLength + 1 + paddingLength;
 
             // ── 3. Lay out the unencrypted packet ─────────────────────────
             // [0..3]   BE32 packet_length
@@ -311,71 +334,89 @@ internal sealed class PacketWriter : IAsyncDisposable
                 totalLen += authLen;
             }
 
-            byte[] outbuf = new byte[totalLen];
-            BinaryPrimitives.WriteInt32BigEndian(outbuf.AsSpan(0, 4), wirePacketLength);
-            outbuf[4] = (byte)paddingLength;
-            Buffer.BlockCopy(body, 0, outbuf, 5, body.Length);
-
-            // Random padding (transport.c:1166). _libssh2_random fills the padding
-            // area; BCL RandomNumberGenerator.Fill is the AOT-friendly equivalent.
-            RandomNumberGenerator.Fill(outbuf.AsSpan(5 + body.Length, paddingLength));
-
-            // ── 4. MAC + encrypt per family ────────────────────────────────
-            if (!_encrypted)
+            // The frame buffer is reused across packets (returned only at
+            // DisposeAsync); the spans below stay scoped to this block so they
+            // do not cross the awaited flush.
+            _frameScratch.ResetWrittenCount();
             {
-                // Pre-NEWKEYS cleartext: no MAC, no encryption.
-            }
-            else if (isAead)
-            {
-                // AEAD (AES-GCM, ChaCha20-Poly1305): single CryptAead call covers
-                // the 4-byte length (AAD / header-key) + payload + tag. The MAC is
-                // integrated; no separate MAC append. transport.c:1189-1197 +
-                // 1240-1251.
-                //
-                // aadLen = 4 (the packet_length field). payloadLen = everything
-                // after the length field: 1 (padlen) + body + padding.
-                int aadLen = 4;
-                int payloadLen = wirePacketLength; // = 1 + body.Length + paddingLength
-                // CryptAead reads src[0..aadLen+payloadLen-1] + tag (decrypt) or
-                // writes dest[0..aadLen+payloadLen-1] + tag (encrypt).
-                Span<byte> dest = outbuf.AsSpan(0, aadLen + payloadLen + authLen);
-                // For encryption, src == the plaintext we just laid out (in outbuf
-                // itself). CryptAead encrypts in-place-safe fashion: it reads the
-                // plaintext from src and writes ciphertext+tag to dest. We point
-                // src and dest at the same buffer region; the AEAD adapters
-                // support this (they copy the AAD then encrypt the payload).
-                _cipher!.CryptAead(_seqno, dest, outbuf.AsSpan(0, aadLen + payloadLen),
-                    payloadLen, aadLen, encrypt: true);
-            }
-            else if (etm)
-            {
-                // ETM: encrypt first (skipping the plaintext 4-byte length),
-                // then MAC over the ciphertext (incl. the plaintext length).
-                // transport.c:1205-1237 (encrypt from crypt_offset=4) + 1254-1266.
-                Span<byte> toEncrypt = outbuf.AsSpan(4, wirePacketLength);
-                _cipher!.Crypt(toEncrypt);
+                Span<byte> outbuf = _frameScratch.GetSpan(totalLen);
+                BinaryPrimitives.WriteInt32BigEndian(outbuf.Slice(0, 4), wirePacketLength);
+                outbuf[4] = (byte)paddingLength;
+                if (compressed)
+                {
+                    _compressScratch.WrittenSpan.CopyTo(outbuf.Slice(5));
+                }
+                else
+                {
+                    payload.Span.CopyTo(outbuf.Slice(5));
+                }
 
-                Span<byte> macOut = outbuf.AsSpan(4 + wirePacketLength, macLen);
-                // MAC over BE32(seqno) ‖ outbuf[0..4+wirePacketLength-1]
-                // (the plaintext length field + the ciphertext body).
-                _mac!.Compute(_seqno, outbuf.AsSpan(0, 4 + wirePacketLength), macOut);
-            }
-            else
-            {
-                // Standard (AES-CBC/CTR + separate HMAC): MAC over plaintext,
-                // then encrypt the plaintext portion only. transport.c:1180-1187
-                // + 1205-1237 (encrypt from crypt_offset=0).
-                Span<byte> macOut = outbuf.AsSpan(4 + wirePacketLength, macLen);
-                // MAC over BE32(seqno) ‖ outbuf[0..4+wirePacketLength-1] (plaintext).
-                _mac!.Compute(_seqno, outbuf.AsSpan(0, 4 + wirePacketLength), macOut);
+                // Random padding (transport.c:1166). _libssh2_random fills the padding
+                // area; BCL RandomNumberGenerator.Fill is the AOT-friendly equivalent.
+                RandomNumberGenerator.Fill(outbuf.Slice(5 + bodyLength, paddingLength));
 
-                // Encrypt the whole packet including the 4-byte length field
-                // (standard: length is encrypted; crypt_offset=0).
-                _cipher!.Crypt(outbuf.AsSpan(0, 4 + wirePacketLength));
+                // ── 4. MAC + encrypt per family ────────────────────────────
+                if (!_encrypted)
+                {
+                    // Pre-NEWKEYS cleartext: no MAC, no encryption.
+                }
+                else if (isAead)
+                {
+                    // AEAD (AES-GCM, ChaCha20-Poly1305): single CryptAead call covers
+                    // the 4-byte length (AAD / header-key) + payload + tag. The MAC is
+                    // integrated; no separate MAC append. transport.c:1189-1197 +
+                    // 1240-1251.
+                    //
+                    // aadLen = 4 (the packet_length field). payloadLen = everything
+                    // after the length field: 1 (padlen) + body + padding.
+                    int aadLen = 4;
+                    int payloadLen = wirePacketLength; // = 1 + body.Length + paddingLength
+                    // CryptAead reads src[0..aadLen+payloadLen-1] + tag (decrypt) or
+                    // writes dest[0..aadLen+payloadLen-1] + tag (encrypt).
+                    Span<byte> dest = outbuf.Slice(0, aadLen + payloadLen + authLen);
+                    // For encryption, src == the plaintext we just laid out (in outbuf
+                    // itself). CryptAead encrypts in-place-safe fashion: it reads the
+                    // plaintext from src and writes ciphertext+tag to dest. We point
+                    // src and dest at the same buffer region; the AEAD adapters
+                    // support this (they copy the AAD then encrypt the payload).
+                    _cipher!.CryptAead(_seqno, dest, outbuf.Slice(0, aadLen + payloadLen),
+                        payloadLen, aadLen, encrypt: true);
+                }
+                else if (etm)
+                {
+                    // ETM: encrypt first (skipping the plaintext 4-byte length),
+                    // then MAC over the ciphertext (incl. the plaintext length).
+                    // transport.c:1205-1237 (encrypt from crypt_offset=4) + 1254-1266.
+                    Span<byte> toEncrypt = outbuf.Slice(4, wirePacketLength);
+                    _cipher!.Crypt(toEncrypt);
+
+                    Span<byte> macOut = outbuf.Slice(4 + wirePacketLength, macLen);
+                    // MAC over BE32(seqno) ‖ outbuf[0..4+wirePacketLength-1]
+                    // (the plaintext length field + the ciphertext body).
+                    _mac!.Compute(_seqno, outbuf.Slice(0, 4 + wirePacketLength), macOut);
+                }
+                else
+                {
+                    // Standard (AES-CBC/CTR + separate HMAC): MAC over plaintext,
+                    // then encrypt the plaintext portion only. transport.c:1180-1187
+                    // + 1205-1237 (encrypt from crypt_offset=0).
+                    Span<byte> macOut = outbuf.Slice(4 + wirePacketLength, macLen);
+                    // MAC over BE32(seqno) ‖ outbuf[0..4+wirePacketLength-1] (plaintext).
+                    _mac!.Compute(_seqno, outbuf.Slice(0, 4 + wirePacketLength), macOut);
+
+                    // Encrypt the whole packet including the 4-byte length field
+                    // (standard: length is encrypted; crypt_offset=0).
+                    _cipher!.Crypt(outbuf.Slice(0, 4 + wirePacketLength));
+                }
+
+                _frameScratch.Advance(totalLen);
             }
 
             // ── 5. Write + flush ──────────────────────────────────────────
-            await _writer.WriteAsync(outbuf, cancellationToken).ConfigureAwait(false);
+            // The frame buffer stays valid across the await (it is a reused
+            // field, not a span); it is only handed back to the pool at
+            // DisposeAsync.
+            await _writer.WriteAsync(_frameScratch.WrittenMemory, cancellationToken).ConfigureAwait(false);
             await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
 
             // ── 6. seqno increment + strict-KEX NEWKEYS reset ──────────────
@@ -406,6 +447,8 @@ internal sealed class PacketWriter : IAsyncDisposable
         _mac?.Dispose();
         _compression?.Dispose();
         _writeLock.Dispose();
+        _compressScratch.Dispose();
+        _frameScratch.Dispose();
         return default;
     }
 }

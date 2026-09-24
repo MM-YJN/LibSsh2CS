@@ -1,3 +1,5 @@
+using System.Buffers;
+
 namespace LibSsh2CS.Transport;
 
 /// <summary>
@@ -15,9 +17,11 @@ internal sealed class NoneCompression : ICompression
         // Nothing to set up.
     }
 
-    public byte[] Compress(ReadOnlySpan<byte> src) => src.ToArray();
+    public void Compress(ReadOnlySpan<byte> src, IBufferWriter<byte> destination)
+        => destination.Write(src);
 
-    public byte[] Decompress(ReadOnlySpan<byte> src) => src.ToArray();
+    public void Decompress(ReadOnlySpan<byte> src, IBufferWriter<byte> destination)
+        => destination.Write(src);
 
     public void Dispose()
     {

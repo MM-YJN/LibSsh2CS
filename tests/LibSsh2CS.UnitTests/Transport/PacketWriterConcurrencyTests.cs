@@ -485,8 +485,11 @@ public class PacketWriterConcurrencyTests
         public bool Compresses => false;
         public bool UseInAuth => false;
         public void Init(bool compress) { }
-        public byte[] Compress(ReadOnlySpan<byte> src) => src.ToArray();
-        public byte[] Decompress(ReadOnlySpan<byte> src) => src.ToArray();
+        public void Compress(ReadOnlySpan<byte> src, IBufferWriter<byte> destination)
+            => destination.Write(src);
+
+        public void Decompress(ReadOnlySpan<byte> src, IBufferWriter<byte> destination)
+            => destination.Write(src);
         public void Dispose() { }
     }
 }

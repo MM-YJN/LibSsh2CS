@@ -72,7 +72,7 @@ internal sealed class ZlibCompression : ICompression
         }
     }
 
-    public byte[] Compress(ReadOnlySpan<byte> src)
+    public void Compress(ReadOnlySpan<byte> src, IBufferWriter<byte> destination)
     {
         if (_encoder is null)
         {
@@ -80,20 +80,20 @@ internal sealed class ZlibCompression : ICompression
         }
 
         // SSH packets are bounded; a src.Length + 64-byte floor covers typical
-        // expansion + the flush marker. ArrayBufferWriter<byte> grows via
-        // ArrayPool<byte>.Shared on demand.
-        var output = new ArrayBufferWriter<byte>(Math.Max(src.Length + 64, 256));
+        // expansion + the flush marker. The destination writer owns its backing
+        // storage (the packet layer reuses a pooled one), so no per-packet
+        // ArrayBufferWriter/ToArray allocation occurs.
 
         // Phase 1: feed all input without finalizing. The stream stays open
         // across packets; only Flush (phase 2) marks a block boundary.
         ReadOnlySpan<byte> remaining = src;
         while (true)
         {
-            Span<byte> dst = output.GetSpan(Math.Max(remaining.Length, 64));
+            Span<byte> dst = destination.GetSpan(Math.Max(remaining.Length + 64, 256));
             OperationStatus status = _encoder.Compress(
                 remaining, dst, out int consumed, out int written, isFinalBlock: false);
 
-            output.Advance(written);
+            destination.Advance(written);
             remaining = remaining[consumed..];
 
             switch (status)
@@ -107,7 +107,7 @@ internal sealed class ZlibCompression : ICompression
                     // written this iteration).
                     if (written == 0)
                     {
-                        output.GetSpan(output.Capacity * 2);
+                        destination.GetSpan(dst.Length + 1);
                     }
 
                     continue;
@@ -125,19 +125,19 @@ internal sealed class ZlibCompression : ICompression
         // needs this marker to yield the packet's bytes.
         while (true)
         {
-            Span<byte> dst = output.GetSpan(64);
+            Span<byte> dst = destination.GetSpan(64);
             OperationStatus status = _encoder.Flush(dst, out int written);
 
-            output.Advance(written);
+            destination.Advance(written);
 
             switch (status)
             {
                 case OperationStatus.Done:
-                    return output.WrittenSpan.ToArray();
+                    return;
                 case OperationStatus.DestinationTooSmall:
                     if (written == 0)
                     {
-                        output.GetSpan(output.Capacity * 2);
+                        destination.GetSpan(dst.Length + 1);
                     }
 
                     continue;
@@ -148,22 +148,22 @@ internal sealed class ZlibCompression : ICompression
         }
     }
 
-    public byte[] Decompress(ReadOnlySpan<byte> src)
+    public void Decompress(ReadOnlySpan<byte> src, IBufferWriter<byte> destination)
     {
         if (_decoder is null)
         {
             throw new InvalidOperationException($"{Name}: Init(compress: false) not called");
         }
 
-        var output = new ArrayBufferWriter<byte>(Math.Max(src.Length * 4, 1024));
-
+        int produced = 0;
         ReadOnlySpan<byte> remaining = src;
         while (true)
         {
-            Span<byte> dst = output.GetSpan(Math.Max(remaining.Length, 256));
+            Span<byte> dst = destination.GetSpan(Math.Max(remaining.Length, 256));
             OperationStatus status = _decoder.Decompress(remaining, dst, out int consumed, out int written);
 
-            output.Advance(written);
+            destination.Advance(written);
+            produced += written;
             remaining = remaining[consumed..];
 
             // Decompression growth cap (parity comp.c:235-250, 289-293): the C
@@ -176,7 +176,7 @@ internal sealed class ZlibCompression : ICompression
             // check errors at the same ~2×40000 ceiling). Without it, a
             // hostile peer's small compressed packet could expand to
             // gigabytes of managed allocations.
-            if (output.WrittenCount >= 2 * PayloadLimit)
+            if (produced >= 2 * PayloadLimit)
             {
                 throw new SshException(
                     SshErrorCode.Zlib,
@@ -188,7 +188,7 @@ internal sealed class ZlibCompression : ICompression
                 case OperationStatus.NeedMoreData:
                     // Decoder has consumed this packet's bytes and is waiting
                     // for the next packet. Dictionary persists in the decoder.
-                    return output.WrittenSpan.ToArray();
+                    return;
                 case OperationStatus.Done:
                     // Mid-session Done means the peer finalized its deflate
                     // stream — a protocol desync.
@@ -198,7 +198,7 @@ internal sealed class ZlibCompression : ICompression
                 case OperationStatus.DestinationTooSmall:
                     if (written == 0)
                     {
-                        output.GetSpan(output.Capacity * 2);
+                        destination.GetSpan(dst.Length + 1);
                     }
 
                     continue;
