@@ -25,6 +25,69 @@ namespace LibSsh2CS.UnitTests.Crypto;
 /// </remarks>
 public class ScalarModLTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void MulAdd_SpanDestination_PreservesBoundariesAndSupportsAliasing(int alias)
+    {
+        byte[] a = Enumerable.Range(0, 32).Select(i => (byte)(i + 1)).ToArray();
+        byte[] b = Enumerable.Range(0, 32).Select(i => (byte)(i * 3)).ToArray();
+        byte[] c = Enumerable.Range(0, 32).Select(i => (byte)(255 - i)).ToArray();
+        byte[] expected = BigToBytes32(BigFromBytes32(a) * BigFromBytes32(b) + BigFromBytes32(c));
+        byte[] aCopy = (byte[])a.Clone();
+        byte[] bCopy = (byte[])b.Clone();
+        byte[] cCopy = (byte[])c.Clone();
+        Span<byte> buffer = stackalloc byte[34];
+        buffer.Fill(0xa5);
+        Span<byte> destination = buffer.Slice(1, 32);
+        scoped ReadOnlySpan<byte> inputA = a;
+        scoped ReadOnlySpan<byte> inputB = b;
+        scoped ReadOnlySpan<byte> inputC = c;
+        if (alias == 1)
+        {
+            a.CopyTo(destination);
+            inputA = destination;
+        }
+        else if (alias == 2)
+        {
+            b.CopyTo(destination);
+            inputB = destination;
+        }
+        else if (alias == 3)
+        {
+            c.CopyTo(destination);
+            inputC = destination;
+        }
+
+        ScalarModL.MulAddInPlace(destination, inputA, inputB, inputC);
+        Assert.Equal(expected, destination.ToArray());
+        Assert.Equal(0xa5, buffer[0]);
+        Assert.Equal(0xa5, buffer[33]);
+        Assert.Equal(aCopy, a);
+        Assert.Equal(bCopy, b);
+        Assert.Equal(cCopy, c);
+    }
+
+    [Fact]
+    public void Reduce_SpanSlice_PreservesBoundariesAndWrapperInput()
+    {
+        byte[] input = Enumerable.Range(0, 64).Select(i => (byte)(255 - i)).ToArray();
+        byte[] original = (byte[])input.Clone();
+        byte[] expected = BigToBytes32(new BigInteger(input, isUnsigned: true, isBigEndian: false));
+        Assert.Equal(expected, ScalarModL.Reduce(input));
+        Assert.Equal(original, input);
+
+        Span<byte> buffer = stackalloc byte[66];
+        buffer.Fill(0xa5);
+        input.CopyTo(buffer.Slice(1, 64));
+        ScalarModL.ReduceInPlace(buffer.Slice(1, 64));
+        Assert.Equal(expected, buffer.Slice(1, 32).ToArray());
+        Assert.Equal(0xa5, buffer[0]);
+        Assert.Equal(0xa5, buffer[65]);
+    }
+
     private const int RandomTrials = 1000;
 
     private static readonly Random s_rng = new(0x5CA1);

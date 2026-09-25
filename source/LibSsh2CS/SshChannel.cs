@@ -86,6 +86,9 @@ public sealed class SshChannel : IAsyncDisposable
 
     // ── Cached CHANNEL_REQUEST names (avoid per-request ASCII encoding) ────
 
+    private static readonly byte[] s_execRequestType = "exec"u8.ToArray();
+    private static readonly byte[] s_shellRequestType = "shell"u8.ToArray();
+    private static readonly byte[] s_subsystemRequestType = "subsystem"u8.ToArray();
     private static readonly byte[] s_envRequestType = "env"u8.ToArray();
     private static readonly byte[] s_ptyReqRequestType = "pty-req"u8.ToArray();
     private static readonly byte[] s_windowChangeRequestType = "window-change"u8.ToArray();
@@ -1044,6 +1047,14 @@ public sealed class SshChannel : IAsyncDisposable
         => string.IsNullOrEmpty(description) ? string.Empty : $": {description}";
 
     /// <summary>Writes an SSH string (BE32 length + bytes) and advances the offset.</summary>
+    private static void WriteString(Span<byte> buf, ref int offset, string value, Encoding encoding)
+    {
+        int length = encoding.GetBytes(value, buf.Slice(offset + 4));
+        BinaryPrimitives.WriteUInt32BigEndian(buf.Slice(offset, 4), (uint)length);
+        offset += 4 + length;
+    }
+
+    /// <summary>Writes an SSH string from already encoded bytes.</summary>
     private static void WriteString(Span<byte> buf, ref int offset, ReadOnlySpan<byte> bytes)
     {
         BinaryPrimitives.WriteInt32BigEndian(buf.Slice(offset, 4), bytes.Length);
@@ -1082,7 +1093,7 @@ public sealed class SshChannel : IAsyncDisposable
     public Task ExecAsync(string command, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(command);
-        return ProcessStartupAsync("exec", Encoding.UTF8.GetBytes(command), cancellationToken);
+        return ProcessStartupAsync("exec", s_execRequestType, command, cancellationToken);
     }
 
     /// <summary>
@@ -1096,7 +1107,7 @@ public sealed class SshChannel : IAsyncDisposable
     /// </summary>
     /// <param name="cancellationToken">Cooperative cancellation.</param>
     public Task ShellAsync(CancellationToken cancellationToken = default)
-        => ProcessStartupAsync("shell", message: null, cancellationToken);
+        => ProcessStartupAsync("shell", s_shellRequestType, message: null, cancellationToken);
 
     /// <summary>
     /// Requests a subsystem on the remote side (e.g. <c>"sftp"</c>): sends
@@ -1112,7 +1123,7 @@ public sealed class SshChannel : IAsyncDisposable
     public Task SubsystemAsync(string subsystem, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(subsystem);
-        return ProcessStartupAsync("subsystem", Encoding.UTF8.GetBytes(subsystem), cancellationToken);
+        return ProcessStartupAsync("subsystem", s_subsystemRequestType, subsystem, cancellationToken);
     }
 
     /// <summary>
@@ -1125,6 +1136,7 @@ public sealed class SshChannel : IAsyncDisposable
     /// trailing length+bytes); non-null for exec/subsystem (carries the
     /// command / subsystem name).
     /// </summary>
+    /// <param name="requestBytes">Cached ASCII bytes of the request type.</param>
     /// <param name="request">The request type name (<c>"exec"</c> /
     /// <c>"shell"</c> / <c>"subsystem"</c>). ASCII; the request-name length is
     /// implicit in the wire string.</param>
@@ -1137,7 +1149,7 @@ public sealed class SshChannel : IAsyncDisposable
     /// <see cref="SshErrorCode.ChannelRequestDenied"/> if the server returns
     /// <c>SSH_MSG_CHANNEL_FAILURE</c> (<c>channel.c:1623-1625</c>).</exception>
     private async Task ProcessStartupAsync(
-        string request, byte[]? message, CancellationToken cancellationToken)
+        string request, byte[] requestBytes, string? message, CancellationToken cancellationToken)
     {
         // channel.c:1536-1538 — process_state == end → BAD_USE.
         if (_processStarted)
@@ -1151,7 +1163,7 @@ public sealed class SshChannel : IAsyncDisposable
         await _requestLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            byte[] payload = BuildProcessStartupPayload(RemoteId, request, message);
+            byte[] payload = BuildProcessStartupPayload(RemoteId, requestBytes, message);
             await _writer.WritePacketAsync(PacketType.ChannelRequest, payload, cancellationToken)
                 .ConfigureAwait(false);
 
@@ -1173,7 +1185,9 @@ public sealed class SshChannel : IAsyncDisposable
             }
 
             // channel.c:1623-1625 — CHANNEL_FAILURE → CHANNEL_REQUEST_DENIED.
-            string detail = message is null ? request : $"{request}: {Encoding.UTF8.GetString(message)}";
+            // Decode the transmitted bytes to preserve replacement fallback in diagnostics.
+            int messageOffset = 1 + 4 + 4 + requestBytes.Length + 1 + 4;
+            string detail = message is null ? request : $"{request}: {Encoding.UTF8.GetString(payload.AsSpan(messageOffset))}";
             throw new SshException(SshErrorCode.ChannelRequestDenied,
                 $"Channel {request} request denied by server for: {detail}");
         }
@@ -1193,20 +1207,19 @@ public sealed class SshChannel : IAsyncDisposable
     /// are appended; otherwise (exec/subsystem) the 4-byte length + UTF-8 body
     /// follow the want_reply byte.
     /// </summary>
-    private static byte[] BuildProcessStartupPayload(uint remoteId, string request, byte[]? message)
+    private static byte[] BuildProcessStartupPayload(uint remoteId, byte[] request, string? message)
     {
-        byte[] req = Encoding.ASCII.GetBytes(request);
-        int messageLenField = message is null ? 0 : 4 + message.Length;
-        byte[] payload = new byte[1 + 4 + 4 + req.Length + 1 + messageLenField];
+        int messageLenField = message is null ? 0 : 4 + Encoding.UTF8.GetByteCount(message);
+        byte[] payload = new byte[1 + 4 + 4 + request.Length + 1 + messageLenField];
         int o = 0;
         payload[o++] = (byte)PacketType.ChannelRequest;
         BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(o, 4), remoteId);
         o += 4;
-        WriteString(payload, ref o, req);
+        WriteString(payload, ref o, request);
         payload[o++] = 0x01;   // want_reply = TRUE (channel.c:1566)
         if (message is not null)
         {
-            WriteString(payload, ref o, message);
+            WriteString(payload, ref o, message, Encoding.UTF8);
         }
 
         return payload;
@@ -1236,19 +1249,17 @@ public sealed class SshChannel : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(name);
         ArgumentNullException.ThrowIfNull(value);
 
-        byte[] nameBytes = Encoding.UTF8.GetBytes(name);
-        byte[] valueBytes = Encoding.UTF8.GetBytes(value);
-
         return SendChannelRequestAsync(
             requestType: "env",
             requestTypeBytes: s_envRequestType,
             wantReply: true,
-            extraLength: 4 + nameBytes.Length + 4 + valueBytes.Length,
-            writeExtra: extra =>
+            extraLength: 4 + Encoding.UTF8.GetByteCount(name) + 4 + Encoding.UTF8.GetByteCount(value),
+            state: (name, value),
+            writeExtra: static (extra, state) =>
             {
                 int o = 0;
-                WriteString(extra, ref o, nameBytes);
-                WriteString(extra, ref o, valueBytes);
+                WriteString(extra, ref o, state.name, Encoding.UTF8);
+                WriteString(extra, ref o, state.value, Encoding.UTF8);
             },
             cancellationToken: cancellationToken);
     }
@@ -1295,12 +1306,12 @@ public sealed class SshChannel : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(term);
 
-        byte[] termBytes = Encoding.ASCII.GetBytes(term);
+        int termLength = Encoding.ASCII.GetByteCount(term);
         byte[] modesBytes = terminalModes ?? [];
 
         // channel.c:1027-1030 — term_len + modes_len > 256 → INVAL. The C
         // channel->reqPTY_packet is a fixed 256-byte buffer; we mirror the cap.
-        if (termBytes.Length + modesBytes.Length > 256)
+        if (termLength + modesBytes.Length > 256)
         {
             throw new SshException(SshErrorCode.Inval,
                 "term + terminal-modes lengths too large (max 256 bytes).");
@@ -1310,16 +1321,17 @@ public sealed class SshChannel : IAsyncDisposable
             requestType: "pty-req",
             requestTypeBytes: s_ptyReqRequestType,
             wantReply: true,
-            extraLength: (4 + termBytes.Length) + 16 + (4 + modesBytes.Length),
-            writeExtra: extra =>
+            extraLength: (4 + termLength) + 16 + (4 + modesBytes.Length),
+            state: (term, width, height, widthPx, heightPx, modesBytes),
+            writeExtra: static (extra, state) =>
             {
                 int o = 0;
-                WriteString(extra, ref o, termBytes);
-                WriteInt32(extra, ref o, width);
-                WriteInt32(extra, ref o, height);
-                WriteInt32(extra, ref o, widthPx);
-                WriteInt32(extra, ref o, heightPx);
-                WriteString(extra, ref o, modesBytes);
+                WriteString(extra, ref o, state.term, Encoding.ASCII);
+                WriteInt32(extra, ref o, state.width);
+                WriteInt32(extra, ref o, state.height);
+                WriteInt32(extra, ref o, state.widthPx);
+                WriteInt32(extra, ref o, state.heightPx);
+                WriteString(extra, ref o, state.modesBytes);
             },
             cancellationToken: cancellationToken);
     }
@@ -1348,13 +1360,14 @@ public sealed class SshChannel : IAsyncDisposable
             requestTypeBytes: s_windowChangeRequestType,
             wantReply: false,
             extraLength: 16,
-            writeExtra: extra =>
+            state: (width, height, widthPx, heightPx),
+            writeExtra: static (extra, state) =>
             {
                 int o = 0;
-                WriteInt32(extra, ref o, width);
-                WriteInt32(extra, ref o, height);
-                WriteInt32(extra, ref o, widthPx);
-                WriteInt32(extra, ref o, heightPx);
+                WriteInt32(extra, ref o, state.width);
+                WriteInt32(extra, ref o, state.height);
+                WriteInt32(extra, ref o, state.widthPx);
+                WriteInt32(extra, ref o, state.heightPx);
             },
             cancellationToken: cancellationToken);
     }
@@ -1393,16 +1406,16 @@ public sealed class SshChannel : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(signalName);
 
-        byte[] sigBytes = Encoding.ASCII.GetBytes(signalName);
         return SendChannelRequestAsync(
             requestType: "signal",
             requestTypeBytes: s_signalRequestType,
             wantReply: false,
-            extraLength: 4 + sigBytes.Length,
-            writeExtra: extra =>
+            extraLength: 4 + Encoding.ASCII.GetByteCount(signalName),
+            state: signalName,
+            writeExtra: static (extra, state) =>
             {
                 int o = 0;
-                WriteString(extra, ref o, sigBytes);
+                WriteString(extra, ref o, state, Encoding.ASCII);
             },
             cancellationToken: cancellationToken);
     }
@@ -1456,7 +1469,8 @@ public sealed class SshChannel : IAsyncDisposable
                 requestTypeBytes: s_authAgentOpenSshRequestType,
                 wantReply: true,
                 extraLength: 0,
-                writeExtra: static _ => { },
+                state: 0,
+                writeExtra: static (_, _) => { },
                 cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
             return;
@@ -1472,7 +1486,8 @@ public sealed class SshChannel : IAsyncDisposable
             requestTypeBytes: s_authAgentRfcRequestType,
             wantReply: true,
             extraLength: 0,
-            writeExtra: static _ => { },
+            state: 0,
+            writeExtra: static (_, _) => { },
             cancellationToken: cancellationToken)
             .ConfigureAwait(false);
     }
@@ -1592,7 +1607,7 @@ public sealed class SshChannel : IAsyncDisposable
     /// Writes the type-specific CHANNEL_REQUEST fields (after the want_reply
     /// byte) into a destination span of exactly the precomputed extra length.
     /// </summary>
-    private delegate void ExtraWriter(Span<byte> destination);
+    private delegate void ExtraWriter<TState>(Span<byte> destination, TState state);
 
     /// <summary>
     /// Builds and sends a <c>SSH_MSG_CHANNEL_REQUEST</c> with the common
@@ -1613,6 +1628,7 @@ public sealed class SshChannel : IAsyncDisposable
     /// immediately after send.</param>
     /// <param name="extraLength">The exact byte count of the type-specific
     /// fields written by <paramref name="writeExtra"/>.</param>
+    /// <param name="state">State passed to the field writer without a closure.</param>
     /// <param name="writeExtra">Callback that writes the type-specific fields
     /// (after the want_reply byte) into a span of exactly
     /// <paramref name="extraLength"/> bytes. ASCII/UTF-8 strings go via the
@@ -1622,12 +1638,13 @@ public sealed class SshChannel : IAsyncDisposable
     /// <see cref="SshErrorCode.ChannelRequestDenied"/> when
     /// <paramref name="wantReply"/><c>=true</c> and the server returns
     /// <c>SSH_MSG_CHANNEL_FAILURE</c>.</exception>
-    private async Task SendChannelRequestAsync(
+    private async Task SendChannelRequestAsync<TState>(
         string requestType,
         byte[] requestTypeBytes,
         bool wantReply,
         int extraLength,
-        ExtraWriter writeExtra,
+        TState state,
+        ExtraWriter<TState> writeExtra,
         CancellationToken cancellationToken)
     {
         // channel.c:2362-2365 (parity with WriteDataAsync guard) — refuse any
@@ -1657,7 +1674,7 @@ public sealed class SshChannel : IAsyncDisposable
             o += 4;
             WriteString(payload, ref o, requestTypeBytes);
             payload[o++] = wantReply ? (byte)1 : (byte)0;
-            writeExtra(payload.AsSpan(o, extraLength));
+            writeExtra(payload.AsSpan(o, extraLength), state);
 
             await _writer.WritePacketAsync(PacketType.ChannelRequest, payload, cancellationToken)
                 .ConfigureAwait(false);

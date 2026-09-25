@@ -11,6 +11,33 @@ namespace LibSsh2CS.UnitTests.Crypto;
 /// </summary>
 public class Ed25519SignTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(64)]
+    [InlineData(4096)]
+    public void Operations_PreserveInputsAndReturnIndependentResults(int messageLength)
+    {
+        byte[] seed = Enumerable.Range(0, 32).Select(i => (byte)i).ToArray();
+        byte[] message = new byte[messageLength];
+        new Random(42).NextBytes(message);
+        byte[] seedCopy = (byte[])seed.Clone();
+        byte[] messageCopy = (byte[])message.Clone();
+        byte[] publicKey = Ed25519.GetPublicKey(seed);
+        byte[] signature = Ed25519.Sign(seed, message);
+        byte[] publicKeyCopy = (byte[])publicKey.Clone();
+        byte[] signatureCopy = (byte[])signature.Clone();
+
+        Assert.True(Ed25519.Verify(publicKey, message, signature));
+        Assert.Equal(signature, Ed25519.Sign(seed, message));
+        Assert.Equal(publicKey, Ed25519.GetPublicKey(seed));
+        Assert.Equal(seedCopy, seed);
+        Assert.Equal(messageCopy, message);
+        Assert.Equal(publicKeyCopy, publicKey);
+        Assert.Equal(signatureCopy, signature);
+        Assert.NotSame(signature, Ed25519.Sign(seed, message));
+        Assert.NotSame(publicKey, Ed25519.GetPublicKey(seed));
+    }
+
     /// <summary>
     /// RFC 8032 §7.1 TEST 1 — sign the empty message with the documented seed,
     /// assert the signature matches the documented value byte-exactly, then

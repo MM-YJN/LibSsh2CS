@@ -111,7 +111,7 @@ internal static class Ed25519
 
         // Verification requires canonical encodings and excludes points of order dividing 8.
         // This does not impose a full prime-subgroup membership check.
-        byte[] encoded = new byte[32];
+        Span<byte> encoded = stackalloc byte[32];
         Ge25519Ops.P3ToBytes(encoded, in a);
         if (!CryptographicOperations.FixedTimeEquals(encoded, publicKey) || IsSmallOrder(in a))
         {
@@ -126,14 +126,15 @@ internal static class Ed25519
 
         // Step 2: range-check S < L (RFC 8032 §5.1.7 step 1). Constant-time
         // byte compare; rejects S ≥ L without leaking which check failed.
-        byte[] sBytes = signature.Slice(32, 32).ToArray();
+        ReadOnlySpan<byte> sBytes = signature.Slice(32, 32);
         if (!IsBelowL(sBytes))
         {
             return false;
         }
 
         // Step 3: k = SHA-512(R ‖ A ‖ M) interpreted little-endian, reduced mod L.
-        byte[] kBytes = Sha512ModL(signature.Slice(0, 32), publicKey, message);
+        Span<byte> kBytes = stackalloc byte[32];
+        Sha512ModL(signature.Slice(0, 32), publicKey, message, kBytes);
 
         // Step 4: compute [S]B and R + [k]A. The unbatched verification equation
         // is [S]B == R + [k]A. We compute both sides independently and compare
@@ -149,10 +150,10 @@ internal static class Ed25519
         Ge25519Ops.P3ToP2(out GeP2 sBP2, in sB);
         Ge25519Ops.P1P1ToP2(out GeP2 rhsP2, in rhsP1P1);
 
-        byte[] lhsEnc = new byte[32];
+        Span<byte> lhsEnc = stackalloc byte[32];
         Ge25519Ops.P2ToBytes(lhsEnc, in sBP2);
 
-        byte[] rhsEnc = new byte[32];
+        Span<byte> rhsEnc = stackalloc byte[32];
         Ge25519Ops.P2ToBytes(rhsEnc, in rhsP2);
 
         return CryptographicOperations.FixedTimeEquals(lhsEnc, rhsEnc);
@@ -168,9 +169,10 @@ internal static class Ed25519
             Ge25519Ops.P1P1ToP3(out multiple, in doubled);
         }
 
-        byte[] encoded = new byte[32];
+        Span<byte> encoded = stackalloc byte[32];
         Ge25519Ops.P3ToBytes(encoded, in multiple);
-        byte[] identity = new byte[32];
+        Span<byte> identity = stackalloc byte[32];
+        identity.Clear();
         identity[0] = 1;
         return CryptographicOperations.FixedTimeEquals(encoded, identity);
     }
@@ -200,48 +202,35 @@ internal static class Ed25519
             throw new ArgumentException("Ed25519 seed must be 32 bytes", nameof(seed));
         }
 
-        // Step 1: h = SHA-512(seed) → 64 bytes.
-        byte[] h = SHA512.HashData(seed);
+        Span<byte> h = stackalloc byte[64];
+        Span<byte> rBytes = stackalloc byte[32];
+        Span<byte> kBytes = stackalloc byte[32];
+        Span<byte> publicKey = stackalloc byte[32];
+        try
+        {
+            SHA512.HashData(seed, h);
+            Span<byte> scalarBytes = h[..32];
+            scalarBytes[0] &= 0b1111_1000;
+            scalarBytes[31] &= 0b0111_1111;
+            scalarBytes[31] |= 0b0100_0000;
 
-        // Step 2: a = clamp(h[0..32]). The clamped scalar is the long-term private
-        // key; all subsequent operations on it must be constant-time.
-        byte[] scalarBytes = h.AsSpan(0, 32).ToArray();
-        scalarBytes[0] &= 0b1111_1000;
-        scalarBytes[31] &= 0b0111_1111;
-        scalarBytes[31] |= 0b0100_0000;
+            PublicKeyFromScalar(scalarBytes, publicKey);
+            HashModL(h[32..], message, rBytes);
 
-        // Step 3: prefix = h[32..64] (used to derive r per message).
-        byte[] prefix = h.AsSpan(32, 32).ToArray();
-
-        // Step 4: A = encode(a * B). Computed via the constant-time fixed-base
-        // scalar mult; A is part of the SHA-512 input for k derivation below.
-        byte[] A = PublicKeyFromScalar(scalarBytes);
-
-        // Step 5: r = SHA-512(prefix ‖ message) interpreted little-endian, reduced mod L.
-        byte[] rBytes = HashModL(prefix, message);
-
-        // Step 6: R = encode(r * B).
-        Ge25519ScalarMult.Base(out GeP3 rB, rBytes);
-        byte[] R = new byte[32];
-        Ge25519Ops.P3ToBytes(R, in rB);
-
-        // Step 7: k = SHA-512(R ‖ A ‖ message) reduced mod L.
-        byte[] kBytes = Sha512ModL(R, A, message);
-
-        // Step 8: S = (r + a * k) mod L. Computed via the constant-time ScalarModL.MulAdd,
-        // which evaluates (a * k + r) mod L without leaking the value of a.
-        byte[] S = ScalarModL.MulAdd(scalarBytes, kBytes, rBytes);
-
-        // Output: R (32 LE) ‖ S (32 LE).
-        byte[] sig = new byte[64];
-        Buffer.BlockCopy(R, 0, sig, 0, 32);
-        Buffer.BlockCopy(S, 0, sig, 32, 32);
-
-        CryptographicOperations.ZeroMemory(h);
-        CryptographicOperations.ZeroMemory(scalarBytes);
-        CryptographicOperations.ZeroMemory(prefix);
-        CryptographicOperations.ZeroMemory(rBytes);
-        return sig;
+            // Write R and S directly into the owned signature result.
+            byte[] signature = new byte[64];
+            Ge25519ScalarMult.Base(out GeP3 rB, rBytes);
+            Ge25519Ops.P3ToBytes(signature.AsSpan(0, 32), in rB);
+            Sha512ModL(signature.AsSpan(0, 32), publicKey, message, kBytes);
+            ScalarModL.MulAddInPlace(signature.AsSpan(32), scalarBytes, kBytes, rBytes);
+            return signature;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(h);
+            CryptographicOperations.ZeroMemory(rBytes);
+            CryptographicOperations.ZeroMemory(kBytes);
+        }
     }
 
     /// <summary>
@@ -258,31 +247,29 @@ internal static class Ed25519
             throw new ArgumentException("Ed25519 seed must be 32 bytes", nameof(seed));
         }
 
-        // h = SHA-512(seed); a = clamp(h[0..32]).
-        byte[] h = SHA512.HashData(seed);
-        byte[] scalarBytes = h.AsSpan(0, 32).ToArray();
-        scalarBytes[0] &= 0b1111_1000;
-        scalarBytes[31] &= 0b0111_1111;
-        scalarBytes[31] |= 0b0100_0000;
-        CryptographicOperations.ZeroMemory(h);
-
+        Span<byte> h = stackalloc byte[64];
         try
         {
-            return PublicKeyFromScalar(scalarBytes);
+            SHA512.HashData(seed, h);
+            Span<byte> scalarBytes = h[..32];
+            scalarBytes[0] &= 0b1111_1000;
+            scalarBytes[31] &= 0b0111_1111;
+            scalarBytes[31] |= 0b0100_0000;
+            byte[] publicKey = new byte[32];
+            PublicKeyFromScalar(scalarBytes, publicKey);
+            return publicKey;
         }
         finally
         {
-            CryptographicOperations.ZeroMemory(scalarBytes);
+            CryptographicOperations.ZeroMemory(h);
         }
     }
 
     /// <summary>encode(a·B) for a clamped private scalar (RFC 8032 §5.1.5 step 4).</summary>
-    private static byte[] PublicKeyFromScalar(byte[] scalarBytes)
+    private static void PublicKeyFromScalar(ReadOnlySpan<byte> scalarBytes, Span<byte> destination)
     {
         Ge25519ScalarMult.Base(out GeP3 aB, scalarBytes);
-        byte[] A = new byte[32];
-        Ge25519Ops.P3ToBytes(A, in aB);
-        return A;
+        Ge25519Ops.P3ToBytes(destination, in aB);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -299,19 +286,24 @@ internal static class Ed25519
     /// <summary>
     /// Computes <c>SHA-512(prefix ‖ message)</c> interpreted little-endian and
     /// reduced mod L. Used by <see cref="Sign"/> step 5 (<c>r</c> derivation).
-    /// Mirrors <see cref="Sha512ModL(ReadOnlySpan{byte}, ReadOnlySpan{byte}, ReadOnlySpan{byte})"/> but with a
+    /// Mirrors <see cref="Sha512ModL(ReadOnlySpan{byte}, ReadOnlySpan{byte}, ReadOnlySpan{byte}, Span{byte})"/> but with a
     /// single prefix+message input instead of <c>R ‖ A ‖ M</c>.
     /// </summary>
-    private static byte[] HashModL(ReadOnlySpan<byte> prefix, ReadOnlySpan<byte> message)
+    private static void HashModL(ReadOnlySpan<byte> prefix, ReadOnlySpan<byte> message, Span<byte> destination)
     {
         int len = prefix.Length + message.Length;
         byte[] buf = new byte[len];
         prefix.CopyTo(buf);
         message.CopyTo(buf.AsSpan(prefix.Length));
 
-        byte[] hash = SHA512.HashData(buf);
-        CryptographicOperations.ZeroMemory(buf);
-        return ScalarModL.Reduce(hash);
+        try
+        {
+            HashAndReduce(buf, destination);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(buf);
+        }
     }
 
     /// <summary>
@@ -320,7 +312,7 @@ internal static class Ed25519
     /// Python reference). Used by <see cref="Verify"/> (k) and <see cref="Sign"/>
     /// step 7 (k).
     /// </summary>
-    private static byte[] Sha512ModL(ReadOnlySpan<byte> r, ReadOnlySpan<byte> a, ReadOnlySpan<byte> message)
+    private static void Sha512ModL(ReadOnlySpan<byte> r, ReadOnlySpan<byte> a, ReadOnlySpan<byte> message, Span<byte> destination)
     {
         int len = r.Length + a.Length + message.Length;
         byte[] buf = new byte[len];
@@ -328,8 +320,22 @@ internal static class Ed25519
         a.CopyTo(buf.AsSpan(r.Length));
         message.CopyTo(buf.AsSpan(r.Length + a.Length));
 
-        byte[] hash = SHA512.HashData(buf);
-        return ScalarModL.Reduce(hash);
+        HashAndReduce(buf, destination);
+    }
+
+    private static void HashAndReduce(ReadOnlySpan<byte> input, Span<byte> destination)
+    {
+        Span<byte> hash = stackalloc byte[64];
+        try
+        {
+            SHA512.HashData(input, hash);
+            ScalarModL.ReduceInPlace(hash);
+            hash[..32].CopyTo(destination);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(hash);
+        }
     }
 
     /// <summary>
@@ -338,7 +344,7 @@ internal static class Ed25519
     /// <c>sc25519_is_canonical</c> (<c>ed25519_ref10.c:2513-2533</c>) — slightly
     /// adapted (we want strictly-less, libsodium wants not-canonical = ≥).
     /// </summary>
-    private static bool IsBelowL(byte[] s)
+    private static bool IsBelowL(ReadOnlySpan<byte> s)
     {
         // Walk from the most-significant byte (index 31) down. c tracks "we've
         // seen a byte where s < L" (so the overall value is < L). n tracks "all

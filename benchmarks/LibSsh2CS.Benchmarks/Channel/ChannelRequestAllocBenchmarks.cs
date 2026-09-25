@@ -7,62 +7,73 @@ using LibSsh2CS.Transport;
 namespace LibSsh2CS.Benchmarks.Channel;
 
 /// <summary>
-/// Isolates the outbound <c>SSH_MSG_CHANNEL_REQUEST</c> builder
-/// (<c>SshChannel.SendChannelRequestAsync</c> + the per-request field writers).
-/// Each request currently assembles a <c>List&lt;byte&gt;</c>, allocates a
-/// temporary <c>byte[4]</c> per integer field, encodes the request-type/signal
-/// strings per call, and copies the assembled list to the final payload array.
+/// Measures complete channel requests, including encoding, framing, and reply
+/// handling. Inputs, fresh channels, and inbound replies are prepared outside
+/// measurement. Correctness is covered by the unit and integration suites.
 /// </summary>
-/// <remarks>
-/// <para>
-/// Both variants are <c>want_reply=false</c> (fire-and-forget), so no reply-wait
-/// machinery pollutes the measurement. <c>window-change</c> is the worst case
-/// for temporary arrays (four integer fields); <c>signal</c> exercises the
-/// per-call string encoding.
-/// </para>
-/// <para>
-/// The client's outbound pipe is drained on the benchmark thread after each
-/// request, so pipe back-pressure never enters the measured region and the run
-/// stays deterministic (single-threaded).
-/// </para>
-/// </remarks>
 [MemoryDiagnoser]
 [BenchmarkCategory("channel-request")]
+[InvocationCount(1)]
 public class ChannelRequestAllocBenchmarks
 {
-    /// <summary>Which request variant to send.</summary>
-    [Params("window-change", "signal")]
-    public string RequestKind { get; set; } = "window-change";
+    private const int BatchSize = 64;
+
+    [Params("exec-empty", "exec-ascii", "exec-utf8", "exec-long", "shell",
+        "subsystem", "env-empty", "env-ascii", "env-utf8", "pty", "signal", "window-change")]
+    public string RequestKind { get; set; } = "exec-ascii";
 
     private ChannelBenchmarkHarness _h = null!;
-    private SshChannel _channel = null!;
+    private readonly SshChannel[] _channels = new SshChannel[BatchSize];
+    private string _text = null!;
 
-    [GlobalSetup]
+    [IterationSetup]
     public void Setup()
     {
         _h = new ChannelBenchmarkHarness(pipeMegabytes: 1);
-        _h.Queue.ReadTimeout = TimeSpan.Zero;
-        _channel = _h.CreateChannel();
+        _text = RequestKind switch
+        {
+            "exec-empty" or "env-empty" => string.Empty,
+            "exec-utf8" or "env-utf8" => "echo 你好 🌍",
+            "exec-long" => new string('x', 4096),
+            _ => "echo hello",
+        };
+        for (int i = 0; i < BatchSize; i++)
+        {
+            _channels[i] = _h.CreateChannel();
+            if (RequestKind is not ("signal" or "window-change"))
+            {
+                byte[] reply = ChannelBenchmarkHarness.BuildCleartextPacket(
+                    PacketType.ChannelSuccess,
+                    ChannelBenchmarkHarness.BuildChannelSuccessPayload(_channels[i].LocalId));
+                _h.ServerWriter.WriteAsync(reply).GetAwaiter().GetResult();
+            }
+        }
     }
 
-    [GlobalCleanup]
+    [IterationCleanup]
     public void Cleanup() => _h.Dispose();
 
-    [Benchmark]
-    public async Task SendRequest()
+    [Benchmark(OperationsPerInvoke = BatchSize)]
+    public async Task SendRequests()
     {
-        Task send = RequestKind switch
+        foreach (SshChannel channel in _channels)
         {
-            "window-change" => _channel.RequestPtyWindowSizeAsync(80, 24, 0, 0, CancellationToken.None),
-            "signal" => _channel.SignalAsync(SshSignal.Term, CancellationToken.None),
-            _ => throw new InvalidOperationException($"Unknown request kind '{RequestKind}'."),
-        };
-
-        await send.ConfigureAwait(false);
-        DrainOutbound();
+            Task send = RequestKind switch
+            {
+                "exec-empty" or "exec-ascii" or "exec-utf8" or "exec-long" => channel.ExecAsync(_text),
+                "shell" => channel.ShellAsync(),
+                "subsystem" => channel.SubsystemAsync("sftp"),
+                "env-empty" or "env-ascii" or "env-utf8" => channel.SetEnvAsync("LANG", _text),
+                "pty" => channel.RequestPtyAsync("xterm-256color", 80, 24),
+                "signal" => channel.SignalAsync(SshSignal.Term),
+                "window-change" => channel.RequestPtyWindowSizeAsync(80, 24),
+                _ => throw new InvalidOperationException($"Unknown request kind '{RequestKind}'."),
+            };
+            await send.ConfigureAwait(false);
+            DrainOutbound();
+        }
     }
 
-    /// <summary>Consumes every packet the client has written, without blocking.</summary>
     private void DrainOutbound()
     {
         PipeReader reader = _h.OutboundReader;

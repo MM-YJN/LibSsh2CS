@@ -97,19 +97,24 @@ internal static class ScalarModL
         // libsodium's sc25519_reduce works in-place on a 64-byte buffer. We copy
         // first so the caller's array is not mutated; only the low 32 bytes are
         // meaningful after reduction.
-        byte[] s = new byte[64];
-        Buffer.BlockCopy(input, 0, s, 0, 64);
-        ReduceInPlace(s);
-        byte[] result = new byte[32];
-        Buffer.BlockCopy(s, 0, result, 0, 32);
-        return result;
+        Span<byte> s = stackalloc byte[64];
+        input.CopyTo(s);
+        try
+        {
+            ReduceInPlace(s);
+            return s[..32].ToArray();
+        }
+        finally
+        {
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(s);
+        }
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // In-place variants (used by tests; match libsodium's mutation contract).
+    // Span-based variants (match libsodium's mutation contract).
     // ════════════════════════════════════════════════════════════════════════
 
-    internal static void MulAddInPlace(byte[] s, byte[] a, byte[] b, byte[] c)
+    internal static void MulAddInPlace(Span<byte> s, ReadOnlySpan<byte> a, ReadOnlySpan<byte> b, ReadOnlySpan<byte> c)
     {
         long a0 = 2097151 & Load3(a, 0);
         long a1 = 2097151 & (Load4(a, 2) >> 5);
@@ -524,7 +529,7 @@ internal static class ScalarModL
         s[31] = (byte)(s11 >> 17);
     }
 
-    internal static void ReduceInPlace(byte[] s)
+    internal static void ReduceInPlace(Span<byte> s)
     {
         long s0 = 2097151 & Load3(s, 0);
         long s1 = 2097151 & (Load4(s, 2) >> 5);
@@ -833,14 +838,14 @@ internal static class ScalarModL
     // Little-endian byte loaders — ports of load_3 / load_4 (ed25519_ref10.c:11-34).
     // ════════════════════════════════════════════════════════════════════════
 
-    private static long Load3(byte[] s, int offset)
+    private static long Load3(ReadOnlySpan<byte> s, int offset)
     {
         return (long)s[offset]
              | ((long)s[offset + 1] << 8)
              | ((long)s[offset + 2] << 16);
     }
 
-    private static long Load4(byte[] s, int offset)
+    private static long Load4(ReadOnlySpan<byte> s, int offset)
     {
         return (long)s[offset]
              | ((long)s[offset + 1] << 8)

@@ -6,9 +6,9 @@ namespace LibSsh2CS.Benchmarks.Crypto;
 
 /// <summary>
 /// Isolates the Ed25519 sign/verify key operation. Signing is the publickey
-/// userauth path; verification is the host-key trust path. Both use the
-/// constant-time fixed-base table lookup and scalar arithmetic, whose
-/// per-operation temporary arrays dominate the allocation figure.
+/// userauth path; verification is the host-key trust path. Message lengths
+/// separate fixed-size allocation costs from the remaining message-sized
+/// hash-input buffers. Signing also returns an owned signature array.
 /// </summary>
 /// <remarks>
 /// Deterministic seed/message; the signature verified by
@@ -19,6 +19,9 @@ namespace LibSsh2CS.Benchmarks.Crypto;
 [BenchmarkCategory("crypto")]
 public class Ed25519AllocBenchmarks
 {
+    [Params(0, 64, 4096)]
+    public int MessageLength { get; set; }
+
     private byte[] _seed = null!;
     private byte[] _publicKey = null!;
     private byte[] _message = null!;
@@ -34,7 +37,8 @@ public class Ed25519AllocBenchmarks
         }
 
         _publicKey = Ed25519.GetPublicKey(_seed);
-        _message = "SSH publickey auth challenge (benchmark payload)"u8.ToArray();
+        _message = new byte[MessageLength];
+        new Random(42).NextBytes(_message);
         _signature = Ed25519.Sign(_seed, _message);
     }
 
