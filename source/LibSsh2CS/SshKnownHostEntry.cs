@@ -17,8 +17,7 @@ namespace LibSsh2CS;
 /// <b>Key representation:</b> the key is stored base64-encoded (matching
 /// <c>struct known_host-&gt;key</c>, which the C code keeps base64 throughout
 /// its lifetime). <see cref="SshKnownHosts.Add(string, byte[], byte[], SshKnownHostKeyType, SshKnownHostFormat, string)"/>
-/// accepts either raw bytes or a pre-encoded base64 string; raw bytes are
-/// encoded once at <c>Add</c> time.
+/// accepts raw bytes, which are encoded once at <c>Add</c> time.
 /// </para>
 /// <para>
 /// <b>Hostname representation:</b>

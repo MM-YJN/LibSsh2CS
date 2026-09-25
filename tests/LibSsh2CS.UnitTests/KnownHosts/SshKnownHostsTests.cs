@@ -239,6 +239,22 @@ public class SshKnownHostsTests
     }
 
     [Fact]
+    public void Add_SpanKey_EncodesOnlyTheProvidedSlice()
+    {
+        using var known = new SshKnownHosts();
+        ReadOnlySpan<byte> key = [0xFF, 0x01, 0x02, 0x03, 0xFF];
+
+        SshKnownHostEntry entry = known.Add(
+            host: "h",
+            salt: ReadOnlySpan<byte>.Empty,
+            key: key.Slice(1, 3),
+            keyType: SshKnownHostKeyType.SshRsa,
+            format: SshKnownHostFormat.Plain);
+
+        Assert.Equal("AQID", entry.Key);
+    }
+
+    [Fact]
     public void Add_NullKey_ThrowsArgumentNullException()
     {
         using var known = new SshKnownHosts();

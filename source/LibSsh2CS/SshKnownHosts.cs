@@ -141,6 +141,36 @@ public sealed class SshKnownHosts : IDisposable
     /// <exception cref="ObjectDisposedException">Thrown if this instance is disposed.</exception>
     public SshKnownHostEntry Add(
         string host,
+        byte[]? salt,
+        byte[] key,
+        SshKnownHostKeyType keyType,
+        SshKnownHostFormat format,
+        string? comment = null)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(host);
+        ArgumentNullException.ThrowIfNull(key);
+        return Add(host, salt.AsSpan(), key.AsSpan(), keyType, format, comment);
+    }
+
+    /// <summary>
+    /// Adds a known-host entry from raw salt and public-key spans.
+    /// </summary>
+    /// <param name="host">Hostname (Plain/Custom) or base64-encoded SHA1 hash.</param>
+    /// <param name="salt">Raw salt bytes for <see cref="SshKnownHostFormat.Sha1"/>; empty otherwise.</param>
+    /// <param name="key">Raw public-key bytes; base64-encoded internally.</param>
+    /// <param name="keyType">Stored key-type discriminator.</param>
+    /// <param name="format">Hostname encoding format.</param>
+    /// <param name="comment">Optional comment; <c>null</c> for no comment.</param>
+    /// <returns>The newly added entry (a stable handle for <see cref="Delete"/>).</returns>
+    /// <exception cref="ArgumentNullException">Thrown if <paramref name="host"/> is <c>null</c>.</exception>
+    /// <exception cref="SshException">
+    /// Thrown with <see cref="SshErrorCode.Inval"/> if
+    /// <see cref="SshKnownHostFormat.Sha1"/> is requested without a salt.
+    /// </exception>
+    /// <exception cref="ObjectDisposedException">Thrown if this instance is disposed.</exception>
+    public SshKnownHostEntry Add(
+        string host,
         ReadOnlySpan<byte> salt,
         ReadOnlySpan<byte> key,
         SshKnownHostKeyType keyType,
@@ -1145,7 +1175,7 @@ public sealed class SshKnownHosts : IDisposable
     /// <c>_libssh2_list_remove</c>). Two entries that happen to share all field
     /// values but were added separately are distinct for deletion. The
     /// <see cref="SshKnownHostEntry"/>'s inherited record value equality is
-    /// deliberately bypassed; treat the entry returned by <see cref="Add"/> as
+    /// deliberately bypassed; treat the entry returned by <see cref="Add(string, byte[], byte[], SshKnownHostKeyType, SshKnownHostFormat, string)"/> as
     /// a handle.
     /// </para>
     /// <para>
@@ -1156,7 +1186,7 @@ public sealed class SshKnownHosts : IDisposable
     /// caller's handle was already removed.
     /// </para>
     /// </remarks>
-    /// <param name="entry">The entry to remove (must be a handle from <see cref="Add"/>).</param>
+    /// <param name="entry">The entry to remove (must be a handle from <see cref="Add(string, byte[], byte[], SshKnownHostKeyType, SshKnownHostFormat, string)"/>).</param>
     /// <returns><c>true</c> if the entry was found and removed; <c>false</c> if not present.</returns>
     /// <exception cref="ArgumentNullException">Thrown if <paramref name="entry"/> is <c>null</c>.</exception>
     /// <exception cref="ObjectDisposedException">Thrown if this instance is disposed.</exception>
