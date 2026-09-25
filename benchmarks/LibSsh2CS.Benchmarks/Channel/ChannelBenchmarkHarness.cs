@@ -29,12 +29,20 @@ internal sealed class ChannelBenchmarkHarness : IDisposable
     private readonly Pipe _s2c;
 
     /// <param name="pipeMegabytes">Per-pipe pause threshold (backpressure bound).</param>
-    public ChannelBenchmarkHarness(int pipeMegabytes = 1)
+    /// <param name="readTimeout">Read deadline for the queue's typed waits, or
+    /// <see langword="null"/> to disable it (the default). Benchmarks that
+    /// quantify the per-wait deadline scope (<c>ReadTimeoutScope</c>) pass a
+    /// value; every other benchmark leaves it disabled so the deadline never
+    /// fires and no timer machinery enters the measured path.</param>
+    public ChannelBenchmarkHarness(int pipeMegabytes = 1, TimeSpan? readTimeout = null)
     {
         _c2s = TransportSetup.CreatePipe(pipeMegabytes);
         _s2c = TransportSetup.CreatePipe(pipeMegabytes);
         ClientWriter = new PacketWriter(_c2s.Writer);
-        Queue = new PacketQueue(new PacketReader(_s2c.Reader));
+        Queue = new PacketQueue(new PacketReader(_s2c.Reader))
+        {
+            ReadTimeout = readTimeout ?? TimeSpan.Zero,
+        };
         Router = new ChannelRouter(Queue, ClientWriter);
         ServerReader = new PacketReader(_c2s.Reader);
     }
@@ -82,6 +90,15 @@ internal sealed class ChannelBenchmarkHarness : IDisposable
         Router.Register(channel);
         return channel;
     }
+
+    /// <summary>
+    /// Runs one cooperative pump batch over the routable type set. Exposes the
+    /// router's test seam (<c>PumpOneBatchForTestAsync</c>) so benchmarks can
+    /// route a pre-fed inbound packet without driving a full channel op.
+    /// </summary>
+    /// <param name="cancellationToken">Cooperative cancellation.</param>
+    public Task PumpOneBatchAsync(CancellationToken cancellationToken)
+        => Router.PumpOneBatchForTestAsync(cancellationToken);
 
     public void Dispose()
     {
@@ -165,4 +182,8 @@ internal sealed class ChannelBenchmarkHarness : IDisposable
         BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(1, 4), recipientChannel);
         return payload;
     }
+
+    /// <summary>Builds a bare <c>SSH_MSG_REQUEST_SUCCESS</c> payload: [81].</summary>
+    public static byte[] BuildRequestSuccessPayload()
+        => new byte[] { (byte)PacketType.RequestSuccess };
 }
