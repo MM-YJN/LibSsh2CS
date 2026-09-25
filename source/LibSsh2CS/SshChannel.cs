@@ -84,6 +84,15 @@ public sealed class SshChannel : IAsyncDisposable
     /// <summary>Backing field for <see cref="RemoteId"/> (mutable for two-phase open).</summary>
     private uint _remoteId;
 
+    // ── Cached CHANNEL_REQUEST names (avoid per-request ASCII encoding) ────
+
+    private static readonly byte[] s_envRequestType = "env"u8.ToArray();
+    private static readonly byte[] s_ptyReqRequestType = "pty-req"u8.ToArray();
+    private static readonly byte[] s_windowChangeRequestType = "window-change"u8.ToArray();
+    private static readonly byte[] s_signalRequestType = "signal"u8.ToArray();
+    private static readonly byte[] s_authAgentOpenSshRequestType = "auth-agent-req@openssh.com"u8.ToArray();
+    private static readonly byte[] s_authAgentRfcRequestType = "auth-agent-req"u8.ToArray();
+
     // ── Windows (direction-named) ─────────────────────────────
 
     /// <summary>libssh2 <c>local.window_size</c> — bytes we may still SEND.</summary>
@@ -118,8 +127,24 @@ public sealed class SshChannel : IAsyncDisposable
 
     // ── Inbound buffers (stderr buffered separately, NORMAL mode) ──
 
+    /// <summary>
+    /// Zero-copy view into an owned packet payload array: the data body
+    /// occupies <c>Buffer[Start .. Start+Length)</c>. Delivery enqueues the
+    /// already-owned packet payload via this segment instead of allocating a
+    /// second array and copying the body (the previous per-packet double
+    /// allocation). <see cref="Buffer"/> retains the leading packet header
+    /// bytes before <see cref="Start"/>, which is harmless — the array was
+    /// already allocated at that size.
+    /// </summary>
+    private readonly struct DataSegment(byte[] buffer, int start, int length)
+    {
+        public readonly byte[] Buffer = buffer;
+        public readonly int Start = start;
+        public readonly int Length = length;
+    }
+
     /// <summary>FIFO of unread stdout payloads (<c>SSH_MSG_CHANNEL_DATA</c> bodies).</summary>
-    private readonly Queue<byte[]> _stdoutBuffer = new();
+    private readonly Queue<DataSegment> _stdoutBuffer = new();
 
     /// <summary>
     /// Read cursor into the front <see cref="_stdoutBuffer"/> entry — bytes of
@@ -134,7 +159,7 @@ public sealed class SshChannel : IAsyncDisposable
     /// bodies, data_type_code = <c>SSH_EXTENDED_DATA_STDERR</c>).
     /// <c>ReadStderrAsync</c> drains this buffer.
     /// </summary>
-    private readonly Queue<byte[]> _stderrBuffer = new();
+    private readonly Queue<DataSegment> _stderrBuffer = new();
 
     /// <summary>
     /// Read cursor into the front <see cref="_stderrBuffer"/> entry — bytes of
@@ -430,18 +455,19 @@ public sealed class SshChannel : IAsyncDisposable
             // packet.c:1060 — receiving data revokes a prior remote EOF.
             _remoteEof = false;
 
-            byte[] data = new byte[dataLen];
-            Buffer.BlockCopy(payload, head, data, 0, dataLen);
+            // Enqueue a zero-copy view of the already-owned packet payload;
+            // the segment's Start skips the 9/13-byte header before the data.
+            DataSegment segment = new(payload, head, dataLen);
 
             // packet.c:1074 — bump read_avail + buffer, atomically.
             _readAvail += (uint)dataLen;
             if (isExtended)
             {
-                _stderrBuffer.Enqueue(data);
+                _stderrBuffer.Enqueue(segment);
             }
             else
             {
-                _stdoutBuffer.Enqueue(data);
+                _stdoutBuffer.Enqueue(segment);
             }
         }
     }
@@ -568,13 +594,21 @@ public sealed class SshChannel : IAsyncDisposable
     /// Drains and returns the next unread stdout payload, or null if the buffer
     /// is empty. Used by <c>ReadAsync</c>; exposed internally for
     /// router-delivery verification. Locked — the
-    /// pumper may enqueue concurrently.
+    /// pumper may enqueue concurrently. Materializes a tight copy because the
+    /// FIFO stores zero-copy segments over the full packet payload.
     /// </summary>
     internal byte[]? TryDequeueStdout()
     {
         lock (_windowLock)
         {
-            return _stdoutBuffer.Count > 0 ? _stdoutBuffer.Dequeue() : null;
+            if (_stdoutBuffer.Count == 0)
+            {
+                return null;
+            }
+
+            DataSegment segment = _stdoutBuffer.Dequeue();
+            _stdoutHeadOffset = 0;
+            return segment.Buffer.AsSpan(segment.Start, segment.Length).ToArray();
         }
     }
 
@@ -583,12 +617,20 @@ public sealed class SshChannel : IAsyncDisposable
     /// Exposed internally for router-delivery verification;
     /// <c>ReadStderrAsync</c> drains it. Returns a locked
     /// snapshot rather than a live enumeration over the racy FIFO.
+    /// Materializes tight copies because the FIFO stores zero-copy segments.
     /// </summary>
     internal IReadOnlyList<byte[]> PeekStderr()
     {
         lock (_windowLock)
         {
-            return _stderrBuffer.ToArray();
+            byte[][] snapshot = new byte[_stderrBuffer.Count][];
+            int i = 0;
+            foreach (DataSegment segment in _stderrBuffer)
+            {
+                snapshot[i++] = segment.Buffer.AsSpan(segment.Start, segment.Length).ToArray();
+            }
+
+            return snapshot;
         }
     }
 
@@ -989,12 +1031,19 @@ public sealed class SshChannel : IAsyncDisposable
         => string.IsNullOrEmpty(description) ? string.Empty : $": {description}";
 
     /// <summary>Writes an SSH string (BE32 length + bytes) and advances the offset.</summary>
-    private static void WriteString(byte[] buf, ref int offset, byte[] bytes)
+    private static void WriteString(Span<byte> buf, ref int offset, ReadOnlySpan<byte> bytes)
     {
-        BinaryPrimitives.WriteInt32BigEndian(buf.AsSpan(offset, 4), bytes.Length);
+        BinaryPrimitives.WriteInt32BigEndian(buf.Slice(offset, 4), bytes.Length);
         offset += 4;
-        Buffer.BlockCopy(bytes, 0, buf, offset, bytes.Length);
+        bytes.CopyTo(buf.Slice(offset));
         offset += bytes.Length;
+    }
+
+    /// <summary>Writes a big-endian int32 and advances the offset.</summary>
+    private static void WriteInt32(Span<byte> buf, ref int offset, int value)
+    {
+        BinaryPrimitives.WriteInt32BigEndian(buf.Slice(offset, 4), value);
+        offset += 4;
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -1179,11 +1228,14 @@ public sealed class SshChannel : IAsyncDisposable
 
         return SendChannelRequestAsync(
             requestType: "env",
+            requestTypeBytes: s_envRequestType,
             wantReply: true,
+            extraLength: 4 + nameBytes.Length + 4 + valueBytes.Length,
             writeExtra: extra =>
             {
-                WriteString(extra, nameBytes);
-                WriteString(extra, valueBytes);
+                int o = 0;
+                WriteString(extra, ref o, nameBytes);
+                WriteString(extra, ref o, valueBytes);
             },
             cancellationToken: cancellationToken);
     }
@@ -1243,15 +1295,18 @@ public sealed class SshChannel : IAsyncDisposable
 
         return SendChannelRequestAsync(
             requestType: "pty-req",
+            requestTypeBytes: s_ptyReqRequestType,
             wantReply: true,
+            extraLength: (4 + termBytes.Length) + 16 + (4 + modesBytes.Length),
             writeExtra: extra =>
             {
-                WriteString(extra, termBytes);
-                WriteInt32(extra, width);
-                WriteInt32(extra, height);
-                WriteInt32(extra, widthPx);
-                WriteInt32(extra, heightPx);
-                WriteString(extra, modesBytes);
+                int o = 0;
+                WriteString(extra, ref o, termBytes);
+                WriteInt32(extra, ref o, width);
+                WriteInt32(extra, ref o, height);
+                WriteInt32(extra, ref o, widthPx);
+                WriteInt32(extra, ref o, heightPx);
+                WriteString(extra, ref o, modesBytes);
             },
             cancellationToken: cancellationToken);
     }
@@ -1277,13 +1332,16 @@ public sealed class SshChannel : IAsyncDisposable
     {
         return SendChannelRequestAsync(
             requestType: "window-change",
+            requestTypeBytes: s_windowChangeRequestType,
             wantReply: false,
+            extraLength: 16,
             writeExtra: extra =>
             {
-                WriteInt32(extra, width);
-                WriteInt32(extra, height);
-                WriteInt32(extra, widthPx);
-                WriteInt32(extra, heightPx);
+                int o = 0;
+                WriteInt32(extra, ref o, width);
+                WriteInt32(extra, ref o, height);
+                WriteInt32(extra, ref o, widthPx);
+                WriteInt32(extra, ref o, heightPx);
             },
             cancellationToken: cancellationToken);
     }
@@ -1325,8 +1383,14 @@ public sealed class SshChannel : IAsyncDisposable
         byte[] sigBytes = Encoding.ASCII.GetBytes(signalName);
         return SendChannelRequestAsync(
             requestType: "signal",
+            requestTypeBytes: s_signalRequestType,
             wantReply: false,
-            writeExtra: extra => WriteString(extra, sigBytes),
+            extraLength: 4 + sigBytes.Length,
+            writeExtra: extra =>
+            {
+                int o = 0;
+                WriteString(extra, ref o, sigBytes);
+            },
             cancellationToken: cancellationToken);
     }
 
@@ -1376,8 +1440,10 @@ public sealed class SshChannel : IAsyncDisposable
         {
             await SendChannelRequestAsync(
                 requestType: "auth-agent-req@openssh.com",
+                requestTypeBytes: s_authAgentOpenSshRequestType,
                 wantReply: true,
-                writeExtra: _ => { },
+                extraLength: 0,
+                writeExtra: static _ => { },
                 cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
             return;
@@ -1390,8 +1456,10 @@ public sealed class SshChannel : IAsyncDisposable
         // channel.c:1248-1258 — fall back to the RFC-draft name.
         await SendChannelRequestAsync(
             requestType: "auth-agent-req",
+            requestTypeBytes: s_authAgentRfcRequestType,
             wantReply: true,
-            writeExtra: _ => { },
+            extraLength: 0,
+            writeExtra: static _ => { },
             cancellationToken: cancellationToken)
             .ConfigureAwait(false);
     }
@@ -1508,6 +1576,12 @@ public sealed class SshChannel : IAsyncDisposable
     // ── Shared CHANNEL_REQUEST send+wait helper ───────────────────────────
 
     /// <summary>
+    /// Writes the type-specific CHANNEL_REQUEST fields (after the want_reply
+    /// byte) into a destination span of exactly the precomputed extra length.
+    /// </summary>
+    private delegate void ExtraWriter(Span<byte> destination);
+
+    /// <summary>
     /// Builds and sends a <c>SSH_MSG_CHANNEL_REQUEST</c> with the common
     /// header <c>[98][u32 remote.id][string request_type][bool want_reply]</c>,
     /// then any type-specific extra fields appended by <paramref name="writeExtra"/>.
@@ -1517,14 +1591,19 @@ public sealed class SshChannel : IAsyncDisposable
     /// method returns as soon as the request is sent (fire-and-forget per
     /// RFC 4254 §4 — used by <c>window-change</c>).
     /// </summary>
-    /// <param name="requestType">The request type name (ASCII, e.g.
-    /// <c>"env"</c>, <c>"pty-req"</c>, <c>"window-change"</c>).</param>
+    /// <param name="requestType">The request type name for error messages
+    /// (ASCII, e.g. <c>"env"</c>, <c>"pty-req"</c>, <c>"window-change"</c>).</param>
+    /// <param name="requestTypeBytes">The pre-encoded ASCII request-type
+    /// bytes (cached per request kind to avoid per-call encoding).</param>
     /// <param name="wantReply">If <c>true</c>, send want_reply=TRUE and wait
     /// for SUCCESS/FAILURE; if <c>false</c>, send want_reply=FALSE and return
     /// immediately after send.</param>
-    /// <param name="writeExtra">Callback that appends the type-specific fields
-    /// (after the want_reply byte) to the target <c>List&lt;byte&gt;</c>. ASCII/UTF-8
-    /// strings go via the <see cref="WriteString(List{byte}, byte[])"/> helper.</param>
+    /// <param name="extraLength">The exact byte count of the type-specific
+    /// fields written by <paramref name="writeExtra"/>.</param>
+    /// <param name="writeExtra">Callback that writes the type-specific fields
+    /// (after the want_reply byte) into a span of exactly
+    /// <paramref name="extraLength"/> bytes. ASCII/UTF-8 strings go via the
+    /// <see cref="WriteString(Span{byte}, ref int, ReadOnlySpan{byte})"/> helper.</param>
     /// <param name="cancellationToken">Cooperative cancellation.</param>
     /// <exception cref="SshException">Thrown with
     /// <see cref="SshErrorCode.ChannelRequestDenied"/> when
@@ -1532,8 +1611,10 @@ public sealed class SshChannel : IAsyncDisposable
     /// <c>SSH_MSG_CHANNEL_FAILURE</c>.</exception>
     private async Task SendChannelRequestAsync(
         string requestType,
+        byte[] requestTypeBytes,
         bool wantReply,
-        Action<List<byte>> writeExtra,
+        int extraLength,
+        ExtraWriter writeExtra,
         CancellationToken cancellationToken)
     {
         // channel.c:2362-2365 (parity with WriteDataAsync guard) — refuse any
@@ -1553,14 +1634,19 @@ public sealed class SshChannel : IAsyncDisposable
         await _requestLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            List<byte> payload = [];
-            payload.Add((byte)PacketType.ChannelRequest);
-            WriteUInt32(payload, RemoteId);
-            WriteString(payload, Encoding.ASCII.GetBytes(requestType));
-            payload.Add(wantReply ? (byte)1 : (byte)0);
-            writeExtra(payload);
+            // Compute the exact size once and fill a single array; avoids the
+            // List<byte> growth, per-field byte[4] temporaries, and ToArray copy.
+            int total = 1 + 4 + (4 + requestTypeBytes.Length) + 1 + extraLength;
+            byte[] payload = new byte[total];
+            int o = 0;
+            payload[o++] = (byte)PacketType.ChannelRequest;
+            BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(o, 4), RemoteId);
+            o += 4;
+            WriteString(payload, ref o, requestTypeBytes);
+            payload[o++] = wantReply ? (byte)1 : (byte)0;
+            writeExtra(payload.AsSpan(o, extraLength));
 
-            await _writer.WritePacketAsync(PacketType.ChannelRequest, payload.ToArray(), cancellationToken)
+            await _writer.WritePacketAsync(PacketType.ChannelRequest, payload, cancellationToken)
                 .ConfigureAwait(false);
 
             if (!wantReply)
@@ -1582,27 +1668,6 @@ public sealed class SshChannel : IAsyncDisposable
         {
             _requestLock.Release();
         }
-    }
-
-    // ── List<byte> writers (shared by all CHANNEL_REQUEST senders) ────────
-
-    /// <summary>Writes a big-endian uint32 to <paramref name="buf"/>.</summary>
-    private static void WriteUInt32(List<byte> buf, uint value)
-    {
-        byte[] tmp = new byte[4];
-        BinaryPrimitives.WriteUInt32BigEndian(tmp, value);
-        buf.AddRange(tmp);
-    }
-
-    /// <summary>Writes a big-endian int32 to <paramref name="buf"/>.</summary>
-    private static void WriteInt32(List<byte> buf, int value)
-        => WriteUInt32(buf, (uint)value);
-
-    /// <summary>Writes an SSH string (BE32 length + bytes) to <paramref name="buf"/>.</summary>
-    private static void WriteString(List<byte> buf, byte[] bytes)
-    {
-        WriteUInt32(buf, (uint)bytes.Length);
-        buf.AddRange(bytes);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -1936,10 +2001,11 @@ public sealed class SshChannel : IAsyncDisposable
         int total = 0;
         while (total < dest.Length && _stdoutBuffer.Count > 0)
         {
-            byte[] front = _stdoutBuffer.Peek();
+            DataSegment front = _stdoutBuffer.Peek();
             int available = front.Length - _stdoutHeadOffset;
             int toCopy = Math.Min(available, dest.Length - total);
-            front.AsSpan(_stdoutHeadOffset, toCopy).CopyTo(dest.Slice(total, toCopy));
+            front.Buffer.AsSpan(front.Start + _stdoutHeadOffset, toCopy)
+                .CopyTo(dest.Slice(total, toCopy));
             _stdoutHeadOffset += toCopy;
             total += toCopy;
 
@@ -1964,10 +2030,11 @@ public sealed class SshChannel : IAsyncDisposable
         int total = 0;
         while (total < dest.Length && _stderrBuffer.Count > 0)
         {
-            byte[] front = _stderrBuffer.Peek();
+            DataSegment front = _stderrBuffer.Peek();
             int available = front.Length - _stderrHeadOffset;
             int toCopy = Math.Min(available, dest.Length - total);
-            front.AsSpan(_stderrHeadOffset, toCopy).CopyTo(dest.Slice(total, toCopy));
+            front.Buffer.AsSpan(front.Start + _stderrHeadOffset, toCopy)
+                .CopyTo(dest.Slice(total, toCopy));
             _stderrHeadOffset += toCopy;
             total += toCopy;
 

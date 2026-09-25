@@ -74,6 +74,32 @@ public class SshChannelReadTests
     }
 
     [Fact]
+    public async Task ReadAsync_PartialFirstPacket_ThenSecondPacket_ComposesOffsets()
+    {
+        // Zero-copy delivery stores a (Buffer, Start, Length) view per packet, so
+        // a partial read must compose the segment's Start with the running head
+        // offset when it crosses into the next packet. Reads 4 bytes from
+        // [1,2,3] + [4,5,6]: 3 from packet 1, then 1 byte into packet 2, then the
+        // remainder [5,6] must come back from packet 2's own Start.
+        using var h = new ChannelTestHarness();
+        SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
+
+        await h.FeedInboundAsync(BuildData(0, [1, 2, 3]), BuildData(0, [4, 5, 6]));
+        h.CompleteInbound();
+        await h.Router.PumpOnceAsync(TestContext.Current.CancellationToken);   // route pkt 1
+        await h.Router.PumpOnceAsync(TestContext.Current.CancellationToken);   // route pkt 2
+
+        byte[] first = new byte[4];
+        Assert.Equal(4, await ch.ReadAsync(first, TestContext.Current.CancellationToken));
+        Assert.Equal([1, 2, 3, 4], first);
+
+        byte[] rest = new byte[4];
+        int n = await ch.ReadAsync(rest, TestContext.Current.CancellationToken);
+        Assert.Equal(2, n);
+        Assert.Equal([5, 6], rest.AsSpan(0, 2).ToArray());
+    }
+
+    [Fact]
     public async Task ReadAsync_BlocksUntilDataArrives_ThenReturns()
     {
         // No data buffered; the read should block on PumpOnceAsync until a DATA

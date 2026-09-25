@@ -19,6 +19,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+using System.Runtime.InteropServices;
+
 namespace LibSsh2CS.Crypto;
 
 /// <summary>
@@ -180,7 +182,9 @@ internal static class Ge25519ScalarMult
         Ge25519Ops.P1P1ToP3(out GeP3 p8, in t8);
         Ge25519Ops.P3ToCached(out GeCached pi7, in p8);
 
-        var pi = new GeCached[8];
+        // pi is a fixed-size scratch table for this call; keep it on the stack
+        // rather than allocating a GeCached[8] per scalar multiplication.
+        Span<GeCached> pi = stackalloc GeCached[8];
         pi[0] = pi0;
         pi[1] = pi1;
         pi[2] = pi2;
@@ -240,19 +244,11 @@ internal static class Ge25519ScalarMult
     /// </summary>
     private static void SelectFromBaseTable(out GePrecomp t, int pos, sbyte b)
     {
-        // The original C code passes &base[pos] (a single 8-element subarray).
-        // We allocate a temporary 8-span view to reuse CMove8Precomp unchanged.
-        // The table is small (256 entries × 80 bytes = ~20 KB) so a stackalloc
-        // copy is wasteful; instead we pass the 2D table slice directly via a
-        // small adapter. C# doesn't support `in GePrecomp[8]` slices from a
-        // 2D `GePrecomp[,]` without an allocation, so for now we look up the
-        // 8 entries individually.
-        var row = new GePrecomp[8];
-        for (int j = 0; j < 8; j++)
-        {
-            row[j] = GeBasepointTable.Table[pos, j];
-        }
-
+        // View row `pos` of the contiguous 32×8 table as a span — no copy.
+        // GePrecomp is an unmanaged struct and the table is a fixed-size
+        // static readonly array, so this view is valid for the call duration.
+        ReadOnlySpan<GePrecomp> row =
+            MemoryMarshal.CreateReadOnlySpan(ref GeBasepointTable.Table[pos, 0], 8);
         Ge25519Ops.CMove8Precomp(out t, row, b);
     }
 }

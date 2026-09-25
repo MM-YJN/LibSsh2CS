@@ -16,7 +16,6 @@ internal sealed class AesGcmCipher : ICipher
 {
     private readonly int _keyLen;
     private AesGcm? _gcm;
-    private byte[]? _key;
     private readonly byte[] _fixedPrefix = new byte[4]; // iv[0..4]
     private ulong _invocationCounter;          // BE64(iv[4..12])
 
@@ -49,11 +48,12 @@ internal sealed class AesGcmCipher : ICipher
             throw new SshException(SshErrorCode.Inval, $"{Name}: iv must be 12 bytes");
         }
 
-        _key = key.ToArray();
+        // AesGcm copies the key into its own state, so no managed key copy is
+        // retained here (see Dispose).
         iv.Slice(0, 4).CopyTo(_fixedPrefix);
         _invocationCounter = BinaryPrimitives.ReadUInt64BigEndian(iv.Slice(4, 8));
         _gcm?.Dispose();
-        _gcm = new AesGcm(_key, 16);
+        _gcm = new AesGcm(key, 16);
     }
 
     public void Crypt(Span<byte> data) => throw new NotSupportedException($"{Name} is an AEAD cipher; use CryptAead");
@@ -133,11 +133,8 @@ internal sealed class AesGcmCipher : ICipher
 
     public void Dispose()
     {
-        if (_key is not null)
-        {
-            CryptographicOperations.ZeroMemory(_key);
-        }
-
+        // Disposing the AesGcm destroys the key state it holds; no separate
+        // managed key copy is retained to zero.
         _gcm?.Dispose();
         _gcm = null;
     }

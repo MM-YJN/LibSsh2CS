@@ -14,7 +14,6 @@ internal sealed class HmacMac : IMac
     private readonly HashAlgorithmName _hashName;
     private readonly int _macLen;
     private readonly bool _isEtm;
-    private byte[]? _key;
     private IncrementalHash? _hmac;
 
     public HmacMac(string name, HashAlgorithmName hashName, int macLen, bool isEtm)
@@ -32,8 +31,9 @@ internal sealed class HmacMac : IMac
     public void Init(ReadOnlySpan<byte> key)
     {
         _hmac?.Dispose();
-        _key = key.ToArray();
-        _hmac = IncrementalHash.CreateHMAC(_hashName, _key);
+        // CreateHMAC copies the key into its internal keyed state, so no
+        // managed key copy is retained here (see Dispose).
+        _hmac = IncrementalHash.CreateHMAC(_hashName, key);
     }
 
     public void Compute(uint seqno, ReadOnlySpan<byte> data, Span<byte> mac)
@@ -73,13 +73,9 @@ internal sealed class HmacMac : IMac
 
     public void Dispose()
     {
+        // Disposing the IncrementalHash destroys the keyed state it holds; no
+        // separate managed key copy is retained to zero.
         _hmac?.Dispose();
         _hmac = null;
-
-        if (_key is not null)
-        {
-            CryptographicOperations.ZeroMemory(_key);
-            _key = null;
-        }
     }
 }

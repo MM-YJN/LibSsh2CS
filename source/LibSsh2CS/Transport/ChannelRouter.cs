@@ -380,8 +380,12 @@ internal sealed class ChannelRouter : IDisposable
                     // RouteRoutableAsync will complete it when 81/82 arrives.
                     // Cancellation: cancel the TCS so the pump sees a cleared
                     // slot and doesn't deliver a stale reply to the next caller.
-                    using CancellationTokenRegistration registration =
-                        cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken));
+                    // Only register when the token can actually fire; the
+                    // default/non-cancellable case skips the closure and
+                    // registration allocation entirely.
+                    using CancellationTokenRegistration registration = cancellationToken.CanBeCanceled
+                        ? cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken))
+                        : default;
                     await tcs.Task.ConfigureAwait(false);
                     // Loop back: TCS is now completed; the top-of-loop check
                     // breaks out cleanly.
@@ -783,8 +787,12 @@ internal sealed class ChannelRouter : IDisposable
 
             // Another task holds the pump lock. Await our signal — which was
             // registered BEFORE the lock attempt, so we cannot miss a wakeup.
-            using CancellationTokenRegistration registration =
-                cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken));
+            // Only register when the token can actually fire; the
+            // default/non-cancellable case skips the closure and registration
+            // allocation entirely.
+            using CancellationTokenRegistration registration = cancellationToken.CanBeCanceled
+                ? cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken))
+                : default;
             await tcs.Task.ConfigureAwait(false);
             return true;
         }
@@ -908,8 +916,12 @@ internal sealed class ChannelRouter : IDisposable
 
                 // Someone else is the pumper. Await our signal — which was
                 // registered BEFORE the lock attempt, so we cannot miss it.
-                using CancellationTokenRegistration registration =
-                    cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken));
+                // Only register when the token can actually fire; the
+                // default/non-cancellable case skips the closure and
+                // registration allocation entirely.
+                using CancellationTokenRegistration registration = cancellationToken.CanBeCanceled
+                    ? cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken))
+                    : default;
                 await tcs.Task.ConfigureAwait(false);
                 // Loop back: re-check slot. The reply should be in the slot now
                 // (or close to it — loop again if not).
