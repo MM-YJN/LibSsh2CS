@@ -93,6 +93,21 @@ public sealed class SshChannel : IAsyncDisposable
     private static readonly byte[] s_authAgentOpenSshRequestType = "auth-agent-req@openssh.com"u8.ToArray();
     private static readonly byte[] s_authAgentRfcRequestType = "auth-agent-req"u8.ToArray();
 
+    // Shared reply-type filters for WaitForReplyAsync. Hoisted so the router's
+    // CombineTypes memoization can key on a stable array reference instead of a
+    // fresh collection-expression array per call.
+    private static readonly int[] s_openReplyTypes =
+    {
+        PacketType.ChannelOpenConfirmation,
+        PacketType.ChannelOpenFailure,
+    };
+
+    private static readonly int[] s_successOrFailureReplyTypes =
+    {
+        PacketType.ChannelSuccess,
+        PacketType.ChannelFailure,
+    };
+
     // ── Windows (direction-named) ─────────────────────────────
 
     /// <summary>libssh2 <c>local.window_size</c> — bytes we may still SEND.</summary>
@@ -785,9 +800,7 @@ public sealed class SshChannel : IAsyncDisposable
             // WaitAsync returns the first reply of the right type regardless of
             // recipient id).
             RawPacket reply = await router.WaitForReplyAsync(
-                channel,
-                [PacketType.ChannelOpenConfirmation, PacketType.ChannelOpenFailure],
-                cancellationToken).ConfigureAwait(false);
+                channel, s_openReplyTypes, cancellationToken).ConfigureAwait(false);
 
             if (reply.Type == PacketType.ChannelOpenConfirmation)
             {
@@ -1147,7 +1160,7 @@ public sealed class SshChannel : IAsyncDisposable
             // AND distinguishes our reply from another channel's by recipient id
             // (cooperative pumper).
             RawPacket reply = await _router.WaitForReplyAsync(
-                this, [PacketType.ChannelSuccess, PacketType.ChannelFailure], cancellationToken)
+                this, s_successOrFailureReplyTypes, cancellationToken)
                 .ConfigureAwait(false);
 
             // channel.c:1617 — process_state = end (set on BOTH success and failure,
@@ -1655,7 +1668,7 @@ public sealed class SshChannel : IAsyncDisposable
             }
 
             RawPacket reply = await _router.WaitForReplyAsync(
-                this, [PacketType.ChannelSuccess, PacketType.ChannelFailure], cancellationToken)
+                this, s_successOrFailureReplyTypes, cancellationToken)
                 .ConfigureAwait(false);
 
             if (reply.Type != PacketType.ChannelSuccess)
@@ -1978,15 +1991,8 @@ public sealed class SshChannel : IAsyncDisposable
     /// Sends <c>[93 CHANNEL_WINDOW_ADJUST][u32 remote.id][u32 adjustment]</c>
     /// (parity <c>channel.c:1900-1912</c>).
     /// </summary>
-    private async Task SendWindowAdjustAsync(uint adjustment, CancellationToken cancellationToken)
-    {
-        byte[] payload = new byte[9];
-        payload[0] = (byte)PacketType.ChannelWindowAdjust;
-        BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(1, 4), RemoteId);
-        BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(5, 4), adjustment);
-        await _writer.WritePacketAsync(PacketType.ChannelWindowAdjust, payload, cancellationToken)
-            .ConfigureAwait(false);
-    }
+    private Task SendWindowAdjustAsync(uint adjustment, CancellationToken cancellationToken)
+        => _writer.WriteWindowAdjustPacketAsync(RemoteId, adjustment, cancellationToken);
 
     /// <summary>
     /// Copies as many unread stdout bytes as fit into <paramref name="dest"/>,
@@ -2177,14 +2183,15 @@ public sealed class SshChannel : IAsyncDisposable
                     .ConfigureAwait(false);
             }
 
-            // channel.c:2397-2399, 2423 — build the CHANNEL_DATA or
-            // EXTENDED_DATA payload (the type and presence of the data_type_code
-            // field depend on stream_id).
-            int packetType = streamId == 0 ? PacketType.ChannelData : PacketType.ChannelExtendedData;
-            byte[] payload = BuildChannelDataPayload(RemoteId, streamId, data.Span.Slice(offset, chunk));
+            // channel.c:2397-2399, 2423 — send the CHANNEL_DATA or
+            // EXTENDED_DATA packet (the type and presence of the data_type_code
+            // field depend on stream_id). The writer frames the short header
+            // directly into its reused frame buffer, so no intermediate
+            // payload array is allocated (or copied) per chunk.
             try
             {
-                await _writer.WritePacketAsync(packetType, payload, cancellationToken)
+                await _writer.WriteChannelDataPacketAsync(
+                    streamId, RemoteId, data.Slice(offset, chunk), cancellationToken)
                     .ConfigureAwait(false);
             }
             catch
@@ -2199,51 +2206,6 @@ public sealed class SshChannel : IAsyncDisposable
             }
 
             offset += chunk;
-        }
-    }
-
-    // ── Write packet builder ───────────────────────────────────────────────
-
-    /// <summary>
-    /// Builds a <c>SSH_MSG_CHANNEL_DATA</c> or
-    /// <c>SSH_MSG_CHANNEL_EXTENDED_DATA</c> payload
-    /// (<c>channel.c:2397-2423</c>):
-    /// <list type="bullet">
-    /// <item><c>streamId == 0</c>:
-    /// <c>[94][u32 remote.id][u32 data_len][data]</c>.</item>
-    /// <item><c>streamId != 0</c>:
-    /// <c>[95][u32 remote.id][u32 data_type_code=streamId][u32 data_len][data]</c>.</item>
-    /// </list>
-    /// </summary>
-    private static byte[] BuildChannelDataPayload(uint remoteId, int streamId, ReadOnlySpan<byte> data)
-    {
-        int packetType = streamId == 0 ? PacketType.ChannelData : PacketType.ChannelExtendedData;
-        if (streamId == 0)
-        {
-            byte[] payload = new byte[1 + 4 + 4 + data.Length];
-            int o = 0;
-            payload[o++] = (byte)packetType;
-            BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(o, 4), remoteId);
-            o += 4;
-            BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(o, 4), data.Length);
-            o += 4;
-            data.CopyTo(payload.AsSpan(o));
-            return payload;
-        }
-        else
-        {
-            // [95][u32 recip][u32 datatype][u32 datalen][data]
-            byte[] payload = new byte[1 + 4 + 4 + 4 + data.Length];
-            int o = 0;
-            payload[o++] = (byte)packetType;
-            BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(o, 4), remoteId);
-            o += 4;
-            BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(o, 4), streamId);
-            o += 4;
-            BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(o, 4), data.Length);
-            o += 4;
-            data.CopyTo(payload.AsSpan(o));
-            return payload;
         }
     }
 

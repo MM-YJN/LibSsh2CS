@@ -468,23 +468,25 @@ internal sealed class PacketReader : IAsyncDisposable
             }
 
             // ── Per-family decrypt + verify + extract ─────────────────────
-            // Each helper validates padding_length and returns the payload
-            // starting at the type byte.
-            byte[] payload;
+            // Each helper validates padding_length and returns a span over the
+            // payload (starting at the type byte) — either within the rented
+            // wire frame or the reused AEAD scratch. The span is consumed
+            // before this method's finally returns those buffers.
+            ReadOnlySpan<byte> payloadSpan;
             if (etm)
             {
-                payload = ReadEtm(wire, (int)wireLength, macLen);
+                payloadSpan = ReadEtm(wire, (int)wireLength, macLen);
             }
             else if (isAead)
             {
-                payload = ReadAead(wire, (int)wireLength, authLen);
+                payloadSpan = ReadAead(wire, (int)wireLength, authLen);
             }
             else
             {
-                payload = ReadStandard(wire, (int)wireLength, macLen, firstBlockPlain!);
+                payloadSpan = ReadStandard(wire, (int)wireLength, macLen, firstBlockPlain!);
             }
 
-            int type = payload.Length > 0 ? payload[0] : -1;
+            int type = payloadSpan.Length > 0 ? payloadSpan[0] : -1;
 
             // ── Decompress (transport.c:292-318) ───────────────────────────
             // Per-packet predicate (transport.c:292-295): active iff encrypted
@@ -492,12 +494,23 @@ internal sealed class PacketReader : IAsyncDisposable
             // (Compresses && UseInAuth) by SetInboundKeys, then flipped to true
             // after auth by ActivateDelayedCompression (called from
             // SshSession.MarkAuthenticated for zlib@openssh.com).
+            //
+            // The uncompressed path materializes the single caller-owned array
+            // that RawPacket.Payload's ownership contract requires. The
+            // compressed path decompresses straight from the span, so it also
+            // allocates exactly one array (the decompressed result) instead of
+            // copying the compressed payload out first and discarding it.
+            byte[] payload;
             if (_compressionActive && _compression is not null && _compression.Compresses)
             {
                 _decompressScratch.ResetWrittenCount();
-                _compression.Decompress(payload, _decompressScratch);
+                _compression.Decompress(payloadSpan, _decompressScratch);
                 payload = _decompressScratch.WrittenSpan.ToArray();
                 type = payload.Length > 0 ? payload[0] : -1;
+            }
+            else
+            {
+                payload = payloadSpan.ToArray();
             }
 
             // ── seqno increment + strict-KEX NEWKEYS reset (transport.c:286, 342-345) ──
@@ -651,7 +664,7 @@ internal sealed class PacketReader : IAsyncDisposable
     /// over the full plaintext body, validate padding, and return the payload.
     /// transport.c:197-229 (MAC), 741-832 (decrypt).
     /// </summary>
-    private byte[] ReadStandard(byte[] wire, int wireLength, int macLen,
+    private ReadOnlySpan<byte> ReadStandard(byte[] wire, int wireLength, int macLen,
         byte[] firstBlockPlain)
     {
         ICipher cipher = _cipher!;
@@ -719,7 +732,7 @@ internal sealed class PacketReader : IAsyncDisposable
                 $"padding_length {paddingLength} > packet_length-1 {wireLength - 1}");
         }
 
-        return ExtractPayload(body, payloadStart: 5, paddingLength);
+        return SlicePayload(body, payloadStart: 5, paddingLength);
     }
 
     /// <summary>
@@ -728,7 +741,7 @@ internal sealed class PacketReader : IAsyncDisposable
     /// wire frame (skipping the 4-byte length), validate padding, and return the
     /// payload. transport.c:206-279.
     /// </summary>
-    private byte[] ReadEtm(byte[] wire, int wireLength, int macLen)
+    private ReadOnlySpan<byte> ReadEtm(byte[] wire, int wireLength, int macLen)
     {
         ICipher cipher = _cipher!;
 
@@ -760,7 +773,7 @@ internal sealed class PacketReader : IAsyncDisposable
 
         // The payload starts at body[1] (after padding_length byte); shift left
         // by 1 (transport.c:281-283) so the returned payload starts at the type byte.
-        return ExtractPayload(body, payloadStart: 1, paddingLength);
+        return SlicePayload(body, payloadStart: 1, paddingLength);
     }
 
     /// <summary>
@@ -770,7 +783,7 @@ internal sealed class PacketReader : IAsyncDisposable
     /// a reused scratch; validate padding and return the payload.
     /// transport.c:791-821 + fullpacket ChaCha path.
     /// </summary>
-    private byte[] ReadAead(byte[] wire, int wireLength, int authLen)
+    private ReadOnlySpan<byte> ReadAead(byte[] wire, int wireLength, int authLen)
     {
         ICipher cipher = _cipher!;
         int aadLen = 4;
@@ -797,29 +810,28 @@ internal sealed class PacketReader : IAsyncDisposable
                 $"padding_length {paddingLength} > packet_length-1 {wireLength - 1}");
         }
 
-        return ExtractPayload(dest.Slice(0, aadLen + payloadLen), payloadStart: 5, paddingLength);
+        return SlicePayload(dest.Slice(0, aadLen + payloadLen), payloadStart: 5, paddingLength);
     }
 
     /// <summary>
-    /// Copies the payload out of a decrypted plaintext body that begins at the
+    /// Slices the payload out of a decrypted plaintext body that begins at the
     /// 4-byte length field (standard/AEAD layout,
     /// <c>[4-byte length][1-byte padding_length][payload][padding]</c>) or after
     /// the 4-byte length has already been stripped (ETM layout,
-    /// <c>[1-byte padding_length][payload][padding]</c>). Returns a fresh
-    /// caller-owned array — the one allocation per packet that
-    /// <see cref="RawPacket.Payload"/>'s ownership contract requires.
+    /// <c>[1-byte padding_length][payload][padding]</c>). Returns a view into
+    /// the caller's body rather than a copy: the caller decides whether to
+    /// materialize the one caller-owned array that
+    /// <see cref="RawPacket.Payload"/>'s ownership contract requires (the
+    /// uncompressed path) or decompress straight from the view (the compressed
+    /// path, which previously copied the payload out only to discard it).
     /// </summary>
-    private static byte[] ExtractPayload(ReadOnlySpan<byte> body, int payloadStart, int paddingLength)
+    private static ReadOnlySpan<byte> SlicePayload(ReadOnlySpan<byte> body, int payloadStart,
+        int paddingLength)
     {
         int payloadLen = body.Length - payloadStart - paddingLength;
-        if (payloadLen <= 0)
-        {
-            return [];
-        }
-
-        byte[] payload = new byte[payloadLen];
-        body.Slice(payloadStart, payloadLen).CopyTo(payload);
-        return payload;
+        return payloadLen <= 0
+            ? default
+            : body.Slice(payloadStart, payloadLen);
     }
 
     public ValueTask DisposeAsync()

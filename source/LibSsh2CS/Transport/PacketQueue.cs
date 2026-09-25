@@ -201,10 +201,18 @@ internal sealed class PacketQueue
     }
 
     /// <summary>
-    /// A linked CTS whose token cancels when <see cref="ReadTimeout"/>
-    /// elapses (or when the caller cancels). Disposing the scope disposes
-    /// both the timer and the CTS.
+    /// A CTS whose token cancels when <see cref="ReadTimeout"/> elapses (or
+    /// when the caller cancels), plus its deadline timer. Disposing the scope
+    /// disposes both the timer and the CTS.
     /// </summary>
+    /// <remarks>
+    /// The timer is necessarily per-wait: <see cref="ITimer.Change"/> cannot
+    /// change the callback state, so a reused timer whose previous deadline
+    /// callback was already dispatched could cancel the next wait's token.
+    /// The CTS, however, only wraps the caller's token when one can actually
+    /// fire — a non-cancellable token gets a plain source, skipping the linked
+    /// registration the common default-token wait used to allocate.
+    /// </remarks>
     private sealed class ReadTimeoutScope : IDisposable
     {
         private readonly CancellationTokenSource _cts;
@@ -212,7 +220,11 @@ internal sealed class PacketQueue
 
         public ReadTimeoutScope(TimeSpan timeout, TimeProvider timeProvider, CancellationToken cancellationToken)
         {
-            _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            // A non-cancellable token needs no linked registration — the plain
+            // CTS is only fired by the deadline timer.
+            _cts = cancellationToken.CanBeCanceled
+                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                : new CancellationTokenSource();
             _timer = timeProvider.CreateTimer(
                 static s => CancelSafely((CancellationTokenSource)s!),
                 _cts, timeout, Timeout.InfiniteTimeSpan);

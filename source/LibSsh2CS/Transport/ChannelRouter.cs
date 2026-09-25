@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
+using System.Runtime.CompilerServices;
 
 using LibSsh2CS.Util;
 
@@ -1692,16 +1693,28 @@ internal sealed class ChannelRouter : IDisposable
 
     /// <summary>
     /// Concatenates <paramref name="replyTypes"/> with
-    /// <see cref="s_channelAsyncTypes"/> into a new array. Allocated per call —
-    /// the per-call cost is negligible (channel ops are not hot-path-tight).
+    /// <see cref="s_channelAsyncTypes"/> into a new array, memoized per
+    /// <paramref name="replyTypes"/> array instance. The channel call sites use
+    /// a small fixed set of reply-type arrays; the cache is keyed by reference
+    /// because <see cref="WaitForReplyAsync"/> also accepts caller-supplied
+    /// arrays. Without the cache, every reply wait allocated the merged array
+    /// on each pump-loop iteration.
     /// </summary>
     private static int[] CombineTypes(int[] replyTypes)
-    {
-        int[] combined = new int[replyTypes.Length + s_channelAsyncTypes.Length];
-        replyTypes.CopyTo(combined, 0);
-        s_channelAsyncTypes.CopyTo(combined, replyTypes.Length);
-        return combined;
-    }
+        => s_combinedTypes.GetValue(replyTypes, static key =>
+        {
+            int[] combined = new int[key.Length + s_channelAsyncTypes.Length];
+            key.CopyTo(combined, 0);
+            s_channelAsyncTypes.CopyTo(combined, key.Length);
+            return combined;
+        });
+
+    /// <summary>
+    /// Memoizes <see cref="CombineTypes"/> results. Reference-keyed: entries
+    /// live only as long as the caller-supplied array is reachable, so a
+    /// caller passing transient arrays cannot leak or unboundedly grow this.
+    /// </summary>
+    private static readonly ConditionalWeakTable<int[], int[]> s_combinedTypes = new();
 
     // ── IDisposable ─────────────────────────────────────
 

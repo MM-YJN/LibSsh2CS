@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.IO.Pipelines;
 using System.Security.Cryptography;
@@ -234,7 +235,7 @@ internal sealed class PacketWriter : IAsyncDisposable
     /// transparently; on-wire packet ordering matches call ordering (parity with
     /// libssh2's single-threaded transport).
     /// </remarks>
-    public async Task WritePacketAsync(int type, ReadOnlyMemory<byte> payload,
+    public Task WritePacketAsync(int type, ReadOnlyMemory<byte> payload,
         CancellationToken cancellationToken = default)
     {
         if (payload.Length == 0 || payload.Span[0] != type)
@@ -243,11 +244,152 @@ internal sealed class PacketWriter : IAsyncDisposable
                 $"payload[0] must equal the type byte {type}", nameof(payload));
         }
 
+        return WritePacketCoreAsync(type, PacketBody.Plain(payload), cancellationToken);
+    }
+
+    /// <summary>
+    /// Sends one <c>SSH_MSG_CHANNEL_DATA</c> / <c>SSH_MSG_CHANNEL_EXTENDED_DATA</c>
+    /// packet, framing the type / recipient-id / (data-type) / data-length
+    /// header directly into the reusable frame buffer. This removes the
+    /// intermediate payload array that the channel write path previously
+    /// allocated (and the extra full copy this writer then made of it) on the
+    /// outbound bulk-transfer path.
+    /// </summary>
+    /// <param name="streamId">0 for stdout (<c>CHANNEL_DATA</c>); non-zero for
+    /// extended data (<c>CHANNEL_EXTENDED_DATA</c> with the data-type field).</param>
+    /// <param name="remoteId">The peer's channel id (the recipient channel
+    /// field).</param>
+    /// <param name="data">The channel data body.</param>
+    /// <param name="cancellationToken">Cooperative cancellation.</param>
+    internal Task WriteChannelDataPacketAsync(int streamId, uint remoteId,
+        ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+    {
+        int type = streamId == 0 ? PacketType.ChannelData : PacketType.ChannelExtendedData;
+        return WritePacketCoreAsync(
+            type, PacketBody.ChannelData(streamId, remoteId, data), cancellationToken);
+    }
+
+    /// <summary>
+    /// Sends one <c>SSH_MSG_CHANNEL_WINDOW_ADJUST</c> packet, framing the fixed
+    /// 9-byte body directly into the reusable frame buffer (no per-send payload
+    /// array). Window adjusts are emitted on the bulk-receive path — and, for
+    /// extended-data refunds, from a second concurrent flow — so the old
+    /// per-call array could not be replaced by a shared scratch buffer without
+    /// racing; framing it in the writer avoids both the allocation and the race.
+    /// </summary>
+    /// <param name="remoteId">The peer's channel id (the recipient channel
+    /// field).</param>
+    /// <param name="adjustment">Bytes to credit to the peer's send window.</param>
+    /// <param name="cancellationToken">Cooperative cancellation.</param>
+    internal Task WriteWindowAdjustPacketAsync(uint remoteId, uint adjustment,
+        CancellationToken cancellationToken = default)
+    {
+        return WritePacketCoreAsync(
+            PacketType.ChannelWindowAdjust,
+            PacketBody.WindowAdjust(remoteId, adjustment),
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// The packet body to frame: either an already-composed payload (whose
+    /// first byte is the type byte), a channel-data header plus data, or a
+    /// fixed window-adjust body. A value type so the body is passed and
+    /// written without boxing, closures, or an intermediate payload array.
+    /// </summary>
+    private readonly struct PacketBody
+    {
+        private enum BodyKind
+        {
+            Plain,
+            ChannelData,
+            WindowAdjust,
+        }
+
+        private readonly BodyKind _kind;
+        private readonly ReadOnlyMemory<byte> _payload;
+        private readonly int _streamId;
+        private readonly uint _remoteId;
+        private readonly uint _adjustment;
+
+        private PacketBody(BodyKind kind, ReadOnlyMemory<byte> payload, int streamId,
+            uint remoteId, uint adjustment)
+        {
+            _kind = kind;
+            _payload = payload;
+            _streamId = streamId;
+            _remoteId = remoteId;
+            _adjustment = adjustment;
+        }
+
+        public static PacketBody Plain(ReadOnlyMemory<byte> payload)
+            => new(BodyKind.Plain, payload, 0, 0, 0);
+
+        public static PacketBody ChannelData(int streamId, uint remoteId, ReadOnlyMemory<byte> data)
+            => new(BodyKind.ChannelData, data, streamId, remoteId, 0);
+
+        public static PacketBody WindowAdjust(uint remoteId, uint adjustment)
+            => new(BodyKind.WindowAdjust, default, 0, remoteId, adjustment);
+
+        /// <summary>True when the body is the payload itself (no channel header).</summary>
+        public bool IsPlain => _kind == BodyKind.Plain;
+
+        /// <summary>The data span for a plain body (only meaningful when
+        /// <see cref="IsPlain"/> is <see langword="true"/>).</summary>
+        public ReadOnlySpan<byte> PayloadSpan => _payload.Span;
+
+        /// <summary>The framed body length, including any channel-data header.</summary>
+        public int Length => _kind switch
+        {
+            BodyKind.Plain => _payload.Length,
+            BodyKind.ChannelData => (_streamId == 0 ? 1 + 4 + 4 : 1 + 4 + 4 + 4) + _payload.Length,
+            _ => 1 + 4 + 4,
+        };
+
+        /// <summary>Writes the framed body (header + data) into <paramref name="destination"/>.</summary>
+        public void Write(Span<byte> destination)
+        {
+            if (_kind == BodyKind.Plain)
+            {
+                _payload.Span.CopyTo(destination);
+                return;
+            }
+
+            if (_kind == BodyKind.WindowAdjust)
+            {
+                destination[0] = (byte)PacketType.ChannelWindowAdjust;
+                BinaryPrimitives.WriteUInt32BigEndian(destination.Slice(1, 4), _remoteId);
+                BinaryPrimitives.WriteUInt32BigEndian(destination.Slice(5, 4), _adjustment);
+                return;
+            }
+
+            int o = 0;
+            destination[o++] = (byte)(_streamId == 0
+                ? PacketType.ChannelData
+                : PacketType.ChannelExtendedData);
+            BinaryPrimitives.WriteUInt32BigEndian(destination.Slice(o, 4), _remoteId);
+            o += 4;
+            if (_streamId != 0)
+            {
+                BinaryPrimitives.WriteInt32BigEndian(destination.Slice(o, 4), _streamId);
+                o += 4;
+            }
+
+            BinaryPrimitives.WriteInt32BigEndian(destination.Slice(o, 4), _payload.Length);
+            o += 4;
+            _payload.Span.CopyTo(destination.Slice(o));
+        }
+    }
+
+    private async Task WritePacketCoreAsync(int type, PacketBody body,
+        CancellationToken cancellationToken)
+    {
         // Serialize with SetOutboundKeys and any other concurrent WritePacketAsync
         // caller. The lock is held across the entire frame+encrypt+flush+seqno
         // sequence so two concurrent channel writes (multi-channel cooperative
         // pumper) produce strictly-ordered on-wire output.
         await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        byte[]? pooledBody = null;
+        int pooledBodyLength = 0;
         try
         {
             // ── 1. Compress (if active) ────────────────────────────────────
@@ -266,7 +408,25 @@ internal sealed class PacketWriter : IAsyncDisposable
             if (compressed)
             {
                 _compressScratch.ResetWrittenCount();
-                _compression!.Compress(payload.Span, _compressScratch);
+                if (body.IsPlain)
+                {
+                    // The payload is already a materialized span: compress it
+                    // straight from the caller's memory.
+                    _compression!.Compress(body.PayloadSpan, _compressScratch);
+                }
+                else
+                {
+                    // The body is composed (channel-data header + data).
+                    // Compression buffers into its own scratch, so stage the
+                    // composed body in a pooled array just for this packet.
+                    // The uncompressed path never touches this branch and so
+                    // never allocates a body array.
+                    pooledBody = ArrayPool<byte>.Shared.Rent(body.Length);
+                    pooledBodyLength = body.Length;
+                    body.Write(pooledBody.AsSpan(0, body.Length));
+                    _compression!.Compress(pooledBody.AsSpan(0, body.Length), _compressScratch);
+                }
+
                 bodyLength = _compressScratch.WrittenCount;
 
                 // Parity transport.c:1065-1078: the compressed output is
@@ -281,7 +441,7 @@ internal sealed class PacketWriter : IAsyncDisposable
             }
             else
             {
-                bodyLength = payload.Length;
+                bodyLength = body.Length;
                 if (bodyLength >= MaxUncompressedPayload)
                 {
                     // Parity transport.c:1099-1102: an uncompressed payload of
@@ -348,7 +508,7 @@ internal sealed class PacketWriter : IAsyncDisposable
                 }
                 else
                 {
-                    payload.Span.CopyTo(outbuf.Slice(5));
+                    body.Write(outbuf.Slice(5, bodyLength));
                 }
 
                 // Random padding (transport.c:1166). _libssh2_random fills the padding
@@ -437,6 +597,15 @@ internal sealed class PacketWriter : IAsyncDisposable
         }
         finally
         {
+            if (pooledBody is not null)
+            {
+                // The staged body may hold plaintext channel data; clear the
+                // used portion before returning it (matching the reader's
+                // wire-buffer zeroing).
+                CryptographicOperations.ZeroMemory(pooledBody.AsSpan(0, pooledBodyLength));
+                ArrayPool<byte>.Shared.Return(pooledBody);
+            }
+
             _writeLock.Release();
         }
     }
