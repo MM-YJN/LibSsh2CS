@@ -55,13 +55,20 @@ public class BufferedPacketReadAllocBenchmarks
             _writer.WritePacketAsync(PacketType.ChannelData, payload).GetAwaiter().GetResult();
         }
 
-        // Consume one valid packet to warm reader scratch and verify synchronous completion.
-#pragma warning disable IDE0008 // Keep identical benchmark source for Task and ValueTask baselines.
-        var warmup = _reader.ReadPacketAsync();
-#pragma warning restore IDE0008
-        if (!warmup.IsCompletedSuccessfully || warmup.GetAwaiter().GetResult().Payload.Length != PayloadSize)
+        WarmReader();
+    }
+
+    private void WarmReader()
+    {
+        ValueTask<RawPacket> warmup = _reader.ReadPacketAsync();
+        if (!warmup.IsCompletedSuccessfully)
         {
             throw new InvalidOperationException("Expected a complete buffered packet.");
+        }
+        using RawPacket packet = warmup.GetAwaiter().GetResult();
+        if (packet.Payload.Length != PayloadSize)
+        {
+            throw new InvalidOperationException("Unexpected payload length.");
         }
     }
 
@@ -71,7 +78,7 @@ public class BufferedPacketReadAllocBenchmarks
         int length = 0;
         for (int i = 0; i < BatchSize; i++)
         {
-            RawPacket packet = await _reader.ReadPacketAsync().ConfigureAwait(false);
+            using RawPacket packet = await _reader.ReadPacketAsync().ConfigureAwait(false);
             length += packet.Payload.Length;
         }
         return length;

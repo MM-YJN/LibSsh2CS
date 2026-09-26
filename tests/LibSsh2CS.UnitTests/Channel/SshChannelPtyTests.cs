@@ -28,32 +28,32 @@ public class SshChannelPtyTests
             widthPx: 640, heightPx: 384, terminalModes: modes,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelRequest, req.Type);
 
         int o = 1 + 4;   // skip type + recip
-        Assert.Equal("pty-req", ReadStringAt(req.Payload, o));
+        Assert.Equal("pty-req", ReadStringAt(req.Payload.ToArray(), o));
         o += 4 + 7;      // skip strlen + "pty-req"
-        Assert.Equal(1, req.Payload[o]);   // want_reply = TRUE
+        Assert.Equal(1, req.Payload.Span[o]);   // want_reply = TRUE
         o += 1;
 
-        Assert.Equal("xterm", ReadStringAt(req.Payload, o));
+        Assert.Equal("xterm", ReadStringAt(req.Payload.ToArray(), o));
         o += 4 + 5;      // skip strlen + "xterm"
 
-        Assert.Equal(80u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(o, 4)));
+        Assert.Equal(80u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(o, 4)));
         o += 4;
-        Assert.Equal(24u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(o, 4)));
+        Assert.Equal(24u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(o, 4)));
         o += 4;
-        Assert.Equal(640u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(o, 4)));
+        Assert.Equal(640u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(o, 4)));
         o += 4;
-        Assert.Equal(384u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(o, 4)));
+        Assert.Equal(384u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(o, 4)));
         o += 4;
 
         // Trailing modes string.
-        uint modesLen = BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(o, 4));
+        uint modesLen = BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(o, 4));
         Assert.Equal((uint)modes.Length, modesLen);
         byte[] actualModes = new byte[modes.Length];
-        Buffer.BlockCopy(req.Payload, o + 4, actualModes, 0, actualModes.Length);
+        Buffer.BlockCopy(req.Payload.ToArray(), o + 4, actualModes, 0, actualModes.Length);
         Assert.Equal(modes, actualModes);
 
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildSimpleReplyPayload(PacketType.ChannelSuccess, 0)));
@@ -69,21 +69,21 @@ public class SshChannelPtyTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task t = ch.RequestPtyAsync("dumb", 40, 13, cancellationToken: TestContext.Current.CancellationToken);
-        RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
 
         int o = 1 + 4 + 4 + 7 + 1;   // type + recip + strlen + "pty-req" + want_reply
-        Assert.Equal("dumb", ReadStringAt(req.Payload, o));
+        Assert.Equal("dumb", ReadStringAt(req.Payload.ToArray(), o));
         o += 4 + 4;                  // strlen + "dumb"
 
-        Assert.Equal(40u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(o, 4)));
+        Assert.Equal(40u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(o, 4)));
         o += 4;
-        Assert.Equal(13u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(o, 4)));
+        Assert.Equal(13u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(o, 4)));
         o += 4;
-        Assert.Equal(0u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(o, 4)));   // widthPx
+        Assert.Equal(0u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(o, 4)));   // widthPx
         o += 4;
-        Assert.Equal(0u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(o, 4)));   // heightPx
+        Assert.Equal(0u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(o, 4)));   // heightPx
         o += 4;
-        Assert.Equal(0u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(o, 4)));   // empty modes
+        Assert.Equal(0u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(o, 4)));   // empty modes
 
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildSimpleReplyPayload(PacketType.ChannelSuccess, 0)));
         h.CompleteInbound();
@@ -97,7 +97,7 @@ public class SshChannelPtyTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task t = ch.RequestPtyAsync("xterm", 80, 24, cancellationToken: TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildSimpleReplyPayload(PacketType.ChannelSuccess, 0)));
         h.CompleteInbound();
         await t;
@@ -111,7 +111,7 @@ public class SshChannelPtyTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task t = ch.RequestPtyAsync("xterm", 80, 24, cancellationToken: TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelFailure, BuildSimpleReplyPayload(PacketType.ChannelFailure, 0)));
         h.CompleteInbound();
 
@@ -147,7 +147,7 @@ public class SshChannelPtyTests
 
         Task t = ch.RequestPtyAsync(term, 80, 24, terminalModes: modes,
             cancellationToken: TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildSimpleReplyPayload(PacketType.ChannelSuccess, 0)));
         h.CompleteInbound();
         await t;
@@ -174,22 +174,22 @@ public class SshChannelPtyTests
 
         Task t = ch.RequestPtyWindowSizeAsync(120, 40, 800, 600, TestContext.Current.CancellationToken);
 
-        RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelRequest, req.Type);
 
         int o = 1 + 4;   // skip type + recip
-        Assert.Equal("window-change", ReadStringAt(req.Payload, o));
+        Assert.Equal("window-change", ReadStringAt(req.Payload.ToArray(), o));
         o += 4 + 13;     // skip strlen + "window-change"
-        Assert.Equal(0, req.Payload[o]);   // want_reply = FALSE
+        Assert.Equal(0, req.Payload.Span[o]);   // want_reply = FALSE
         o += 1;
 
-        Assert.Equal(120u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(o, 4)));
+        Assert.Equal(120u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(o, 4)));
         o += 4;
-        Assert.Equal(40u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(o, 4)));
+        Assert.Equal(40u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(o, 4)));
         o += 4;
-        Assert.Equal(800u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(o, 4)));
+        Assert.Equal(800u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(o, 4)));
         o += 4;
-        Assert.Equal(600u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(o, 4)));
+        Assert.Equal(600u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(o, 4)));
 
         // No reply expected — fire-and-forget per channel.c:1316 (want_reply=FALSE).
         await t;
@@ -215,7 +215,7 @@ public class SshChannelPtyTests
         await ch.RequestPtyWindowSizeAsync(100, 30, cancellationToken: cts.Token);
 
         // The outbound packet still went out.
-        RawPacket req = await h.ServerReader.ReadPacketAsync(cancellationToken);
+        using RawPacket req = await h.ServerReader.ReadPacketAsync(cancellationToken);
         Assert.Equal(PacketType.ChannelRequest, req.Type);
     }
 

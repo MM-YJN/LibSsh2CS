@@ -128,7 +128,7 @@ public class DelayedCompressionActivationTests
             new NoopCipher(), new NoopMac(), comp,
             strictKex: false, compressionActive: comp.Compresses && comp.UseInAuth);
 
-        RawPacket pkt = await reader.ReadPacketAsync(ct);
+        using RawPacket pkt = await reader.ReadPacketAsync(ct);
         Assert.Equal(PacketType.Ignore, pkt.Type);
         Assert.Empty(comp.DecompressCalls);
     }
@@ -153,7 +153,7 @@ public class DelayedCompressionActivationTests
 
         reader.ActivateDelayedCompression();
 
-        RawPacket pkt = await reader.ReadPacketAsync(ct);
+        using RawPacket pkt = await reader.ReadPacketAsync(ct);
         Assert.Equal(PacketType.Ignore, pkt.Type);
         Assert.Single(comp.DecompressCalls);
     }
@@ -174,7 +174,7 @@ public class DelayedCompressionActivationTests
             new NoopCipher(), new NoopMac(), comp,
             strictKex: false, compressionActive: comp.Compresses && comp.UseInAuth);
 
-        RawPacket pkt = await reader.ReadPacketAsync(ct);
+        using RawPacket pkt = await reader.ReadPacketAsync(ct);
         Assert.Equal(PacketType.Ignore, pkt.Type);
         Assert.Single(comp.DecompressCalls);
     }

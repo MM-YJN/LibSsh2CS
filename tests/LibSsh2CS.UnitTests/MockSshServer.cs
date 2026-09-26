@@ -112,8 +112,8 @@ internal sealed class MockSshServer : IDisposable
         }
 
         // ── KEXINIT exchange ──────────────────────────────────────────────
-        RawPacket clientKexInitPkt = await serverReader.ReadPacketAsync(cancellationToken).ConfigureAwait(false);
-        byte[] clientKexInit = clientKexInitPkt.Payload;
+        using RawPacket clientKexInitPkt = await serverReader.ReadPacketAsync(cancellationToken).ConfigureAwait(false);
+        byte[] clientKexInit = clientKexInitPkt.Payload.ToArray();
 
         // Optional pre-KEXINIT IGNORE injection (see the property).
         if (SendIgnoreBeforeKexInit)
@@ -138,9 +138,9 @@ internal sealed class MockSshServer : IDisposable
         Negotiated = KeyExchange.Negotiate(clientInit, serverInit);
 
         // ── KEX: curve25519 (read KEXDH_INIT, compute shared secret, send REPLY) ──
-        RawPacket init = await serverReader.ReadPacketAsync(cancellationToken).ConfigureAwait(false);
+        using RawPacket init = await serverReader.ReadPacketAsync(cancellationToken).ConfigureAwait(false);
         AssertType(PacketType.KexDhInit, init);
-        byte[] qC = ExtractString(init.Payload, 1);
+        byte[] qC = ExtractString(init.Payload.ToArray(), 1);
 
         var serverKp = new Curve25519KeyExchange();
         byte[] qS = serverKp.PublicKey;
@@ -211,7 +211,7 @@ internal sealed class MockSshServer : IDisposable
         await InstallKeys(serverReader, Negotiated, SharedSecret.Value, ExchangeHash, isOutbound: true, cancellationToken);
 
         // ── SERVICE_REQUEST → SERVICE_ACCEPT ─────────────────────────────
-        RawPacket svcReq = await serverReader.ReadPacketAsync(cancellationToken).ConfigureAwait(false);
+        using RawPacket svcReq = await serverReader.ReadPacketAsync(cancellationToken).ConfigureAwait(false);
         AssertType(PacketType.ServiceRequest, svcReq);
         // Echo "ssh-userauth" back in the SERVICE_ACCEPT (or the override,
         // which drives the client's post-KEX Proto failure path).

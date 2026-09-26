@@ -25,16 +25,16 @@ public class SshChannelAuthAgentTests
 
         Task t = ch.RequestAuthAgentAsync(TestContext.Current.CancellationToken);
 
-        RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelRequest, req.Type);
 
-        Assert.Equal((byte)PacketType.ChannelRequest, req.Payload[0]);
-        Assert.Equal(5u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(1, 4)));
-        Assert.Equal("auth-agent-req@openssh.com", ReadStringAt(req.Payload, 5));
+        Assert.Equal((byte)PacketType.ChannelRequest, req.Payload.Span[0]);
+        Assert.Equal(5u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(1, 4)));
+        Assert.Equal("auth-agent-req@openssh.com", ReadStringAt(req.Payload.ToArray(), 5));
 
         // want_reply byte right after the request-type string.
         int wantReplyOffset = 5 + 4 + "auth-agent-req@openssh.com".Length;
-        Assert.Equal(1, req.Payload[wantReplyOffset]);   // want_reply = TRUE
+        Assert.Equal(1, req.Payload.Span[wantReplyOffset]);   // want_reply = TRUE
 
         // No extra fields beyond the request-type string + want_reply byte.
         Assert.Equal(wantReplyOffset + 1, req.Payload.Length);
@@ -56,7 +56,7 @@ public class SshChannelAuthAgentTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task t = ch.RequestAuthAgentAsync(TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
 
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildSimpleReplyPayload(PacketType.ChannelSuccess, 0)));
         h.CompleteInbound();
@@ -75,16 +75,16 @@ public class SshChannelAuthAgentTests
         Task t = ch.RequestAuthAgentAsync(TestContext.Current.CancellationToken);
 
         // Consume the first attempt, reply FAILURE.
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelFailure, BuildSimpleReplyPayload(PacketType.ChannelFailure, 0)));
 
         // Consume the second attempt and assert wire shape.
-        RawPacket req2 = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket req2 = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelRequest, req2.Type);
-        Assert.Equal("auth-agent-req", ReadStringAt(req2.Payload, 5));
+        Assert.Equal("auth-agent-req", ReadStringAt(req2.Payload.ToArray(), 5));
 
         int wantReplyOffset = 5 + 4 + "auth-agent-req".Length;
-        Assert.Equal(1, req2.Payload[wantReplyOffset]);
+        Assert.Equal(1, req2.Payload.Span[wantReplyOffset]);
         Assert.Equal(wantReplyOffset + 1, req2.Payload.Length);
 
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildSimpleReplyPayload(PacketType.ChannelSuccess, 0)));
@@ -99,9 +99,9 @@ public class SshChannelAuthAgentTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task t = ch.RequestAuthAgentAsync(TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelFailure, BuildSimpleReplyPayload(PacketType.ChannelFailure, 0)));
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildSimpleReplyPayload(PacketType.ChannelSuccess, 0)));
         h.CompleteInbound();
 
@@ -116,9 +116,9 @@ public class SshChannelAuthAgentTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task t = ch.RequestAuthAgentAsync(TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelFailure, BuildSimpleReplyPayload(PacketType.ChannelFailure, 0)));
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelFailure, BuildSimpleReplyPayload(PacketType.ChannelFailure, 0)));
         h.CompleteInbound();
 
@@ -140,7 +140,7 @@ public class SshChannelAuthAgentTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task t = ch.RequestAuthAgentAsync(TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
 
         // A DISCONNECT in the inbound stream produces SocketDisconnect from
         // PacketQueue (parity with how live servers tear down the transport).
@@ -166,8 +166,8 @@ public class SshChannelAuthAgentTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 9);
 
         Task closeTask = ch.DisposeAsync().AsTask();
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // EOF
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // CLOSE
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // EOF
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // CLOSE
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelClose, BuildSimpleReplyPayload(PacketType.ChannelClose, 0)));
         h.CompleteInbound();
         await closeTask;
@@ -187,7 +187,7 @@ public class SshChannelAuthAgentTests
         SshChannel chB = h.CreateChannel(localId: 1, remoteId: 200);
 
         Task t = chA.RequestAuthAgentAsync(TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
 
         // Feed a DATA packet for B (recipient = B's local id = 1) and the
         // SUCCESS for A together. The router must route B's data even though

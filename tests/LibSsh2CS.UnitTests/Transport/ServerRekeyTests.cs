@@ -71,7 +71,7 @@ public class ServerRekeyTests
             stashPresentAtCallback = q.TryTakeStashed(PacketType.KexInit, out RawPacket p);
             if (stashPresentAtCallback)
             {
-                Assert.Equal(kexPayload, p.Payload);
+                Assert.Equal(kexPayload, p.Payload.ToArray());
             }
 
             return Task.CompletedTask;
@@ -100,7 +100,7 @@ public class ServerRekeyTests
             return Task.CompletedTask;
         };
 
-        RawPacket got = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
+        using RawPacket got = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.KexInit, got.Type);
         Assert.Equal(0, calls);
     }
@@ -117,7 +117,7 @@ public class ServerRekeyTests
         q.RekeyTriggerAsync = null;
 
         // WaitForTypeAsync(20) returns the KEXINIT directly (it's the expected type).
-        RawPacket got = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
+        using RawPacket got = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.KexInit, got.Type);
     }
 
@@ -135,7 +135,7 @@ public class ServerRekeyTests
         q.RekeyTriggerAsync = null;
 
         // Wait for NEWKEYS — the KEXINIT is stashed (not consumed).
-        RawPacket nk = await q.WaitForTypeAsync(PacketType.NewKeys, TestContext.Current.CancellationToken);
+        using RawPacket nk = await q.WaitForTypeAsync(PacketType.NewKeys, TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.NewKeys, nk.Type);
 
         // Now wait for KEXINIT — should come from the stash.
@@ -205,7 +205,7 @@ public class ServerRekeyTests
         ]);
 
         // Wait for NEWKEYS — IGNORE and DEBUG are both inline-discarded.
-        RawPacket got = await q.WaitForTypeAsync(PacketType.NewKeys, TestContext.Current.CancellationToken);
+        using RawPacket got = await q.WaitForTypeAsync(PacketType.NewKeys, TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.NewKeys, got.Type);
     }
 
@@ -220,11 +220,11 @@ public class ServerRekeyTests
             .. BuildCleartextPacket(PacketType.NewKeys, [21]),
         ]);
 
-        RawPacket nk = await q.WaitForTypeAsync(PacketType.NewKeys, TestContext.Current.CancellationToken);
+        using RawPacket nk = await q.WaitForTypeAsync(PacketType.NewKeys, TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.NewKeys, nk.Type);
 
         Assert.True(q.TryTakeStashed(PacketType.ExtInfo, out RawPacket ext));
-        Assert.Equal(extPayload, ext.Payload);
+        Assert.Equal(extPayload, ext.Payload.ToArray());
     }
 
     [Fact]

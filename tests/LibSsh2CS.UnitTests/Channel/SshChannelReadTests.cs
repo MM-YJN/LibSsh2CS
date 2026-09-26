@@ -191,11 +191,11 @@ public class SshChannelReadTests
         // The router is the queue's sole reader; ReadAsync first calls
         // EnsureInboundWindow which writes a WINDOW_ADJUST to the client's
         // outbound pipe. Read it from the server side.
-        RawPacket adj = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket adj = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelWindowAdjust, adj.Type);
         // [93][u32 recip=1][u32 adjustment=2000]
-        Assert.Equal(1u, BinaryPrimitives.ReadUInt32BigEndian(adj.Payload.AsSpan(1, 4)));
-        Assert.Equal(2000u, BinaryPrimitives.ReadUInt32BigEndian(adj.Payload.AsSpan(5, 4)));
+        Assert.Equal(1u, BinaryPrimitives.ReadUInt32BigEndian(adj.Payload.Span.Slice(1, 4)));
+        Assert.Equal(2000u, BinaryPrimitives.ReadUInt32BigEndian(adj.Payload.Span.Slice(5, 4)));
 
         // The read then blocks on PumpOnceAsync (no data). Feed EOF to unblock
         // it so the test completes (it returns 0).
@@ -225,10 +225,10 @@ public class SshChannelReadTests
         byte[] buf = new byte[500];
         Task<int> readTask = ch.ReadAsync(buf, TestContext.Current.CancellationToken);
 
-        RawPacket adj = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket adj = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelWindowAdjust, adj.Type);
         Assert.Equal(ChannelConstants.MinAdjust,
-            BinaryPrimitives.ReadUInt32BigEndian(adj.Payload.AsSpan(5, 4)));   // floored to 1024
+            BinaryPrimitives.ReadUInt32BigEndian(adj.Payload.Span.Slice(5, 4)));   // floored to 1024
 
         // Unblock the read with EOF.
         await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(PacketType.ChannelEof,

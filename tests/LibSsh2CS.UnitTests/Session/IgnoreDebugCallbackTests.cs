@@ -40,7 +40,7 @@ public class IgnoreDebugCallbackTests
         // Server: read the USERAUTH_REQUEST, then send IGNORE + DEBUG
         // followed by SUCCESS — the IGNORE/DEBUG must be inline-dispatched
         // to the callbacks during the auth wait.
-        RawPacket req = await mock.ServerPacketReader!.ReadPacketAsync(ct);
+        using RawPacket req = await mock.ServerPacketReader!.ReadPacketAsync(ct);
         Assert.Equal(PacketType.UserauthRequest, req.Type);
 
         byte[] ignoreData = Encoding.ASCII.GetBytes("ignore me");
@@ -97,7 +97,7 @@ public class IgnoreDebugCallbackTests
 
         Task authTask = session.AuthenticateWithPasswordAsync("user", "pass", null, ct);
 
-        RawPacket req = await mock.ServerPacketReader!.ReadPacketAsync(ct);
+        using RawPacket req = await mock.ServerPacketReader!.ReadPacketAsync(ct);
         Assert.Equal(PacketType.UserauthRequest, req.Type);
 
         byte[] ignorePayload = [(byte)PacketType.Ignore, 0, 0, 0, 1, (byte)'x'];
@@ -133,7 +133,7 @@ public class IgnoreDebugCallbackTests
 
         Task authTask = session.AuthenticateWithPasswordAsync("user", "pass", null, ct);
 
-        RawPacket req = await mock.ServerPacketReader!.ReadPacketAsync(ct);
+        using RawPacket req = await mock.ServerPacketReader!.ReadPacketAsync(ct);
         Assert.Equal(PacketType.UserauthRequest, req.Type);
 
         // [4][always_display=1] — no message/language strings at all.

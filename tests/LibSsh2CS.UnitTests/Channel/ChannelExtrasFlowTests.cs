@@ -28,15 +28,15 @@ public class ChannelExtrasFlowTests
         // 1. PTY request — client → server.
         Task ptyTask = ch.RequestPtyAsync("xterm", 80, 24, terminalModes: new byte[] { 0 },
             cancellationToken: TestContext.Current.CancellationToken);
-        RawPacket ptyReq = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
-        Assert.Equal("pty-req", ReadStringAt(ptyReq.Payload, 5));
+        using RawPacket ptyReq = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        Assert.Equal("pty-req", ReadStringAt(ptyReq.Payload.ToArray(), 5));
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildReply(PacketType.ChannelSuccess, 0)));
         await ptyTask;
 
         // 2. Shell request.
         Task shellTask = ch.ShellAsync(TestContext.Current.CancellationToken);
-        RawPacket shellReq = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
-        Assert.Equal("shell", ReadStringAt(shellReq.Payload, 5));
+        using RawPacket shellReq = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        Assert.Equal("shell", ReadStringAt(shellReq.Payload.ToArray(), 5));
         // Shell carries no message — payload ends at want_reply byte (offset 14).
         Assert.Equal(15, shellReq.Payload.Length);
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildReply(PacketType.ChannelSuccess, 0)));
@@ -44,9 +44,9 @@ public class ChannelExtrasFlowTests
 
         // 3. Write stdin → server receives CHANNEL_DATA.
         Task writeTask = ch.WriteAsync(new byte[] { 0x01, 0x02, 0x03 }, TestContext.Current.CancellationToken);
-        RawPacket dataPkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket dataPkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelData, dataPkt.Type);
-        Assert.Equal(3u, BinaryPrimitives.ReadUInt32BigEndian(dataPkt.Payload.AsSpan(5, 4)));
+        Assert.Equal(3u, BinaryPrimitives.ReadUInt32BigEndian(dataPkt.Payload.Span.Slice(5, 4)));
         await writeTask;
 
         // 4. Server sends stdout + exit-status=0 + EOF + CLOSE (single batch;
@@ -76,9 +76,9 @@ public class ChannelExtrasFlowTests
 
         // 7. DisposeAsync: client sends EOF + CLOSE; peer's CLOSE already routed.
         Task disposeTask = ch.DisposeAsync().AsTask();
-        RawPacket eofPkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket eofPkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelEof, eofPkt.Type);
-        RawPacket closePkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket closePkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelClose, closePkt.Type);
         await disposeTask;
     }
@@ -95,15 +95,15 @@ public class ChannelExtrasFlowTests
 
         // 1. SetEnv.
         Task envTask = ch.SetEnvAsync("FOO", "bar", TestContext.Current.CancellationToken);
-        RawPacket envReq = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
-        Assert.Equal("env", ReadStringAt(envReq.Payload, 5));
+        using RawPacket envReq = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        Assert.Equal("env", ReadStringAt(envReq.Payload.ToArray(), 5));
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildReply(PacketType.ChannelSuccess, 0)));
         await envTask;
 
         // 2. Exec.
         Task execTask = ch.ExecAsync("echo $FOO", TestContext.Current.CancellationToken);
-        RawPacket execReq = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
-        Assert.Equal("exec", ReadStringAt(execReq.Payload, 5));
+        using RawPacket execReq = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        Assert.Equal("exec", ReadStringAt(execReq.Payload.ToArray(), 5));
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildReply(PacketType.ChannelSuccess, 0)));
         await execTask;
 
@@ -138,13 +138,13 @@ public class ChannelExtrasFlowTests
 
         // ch1: PTY.
         Task ptyTask = ch1.RequestPtyAsync("vt100", 40, 13, cancellationToken: TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildReply(PacketType.ChannelSuccess, 0)));
         await ptyTask;
 
         // ch2: exec.
         Task execTask = ch2.ExecAsync("ls", TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         // 3.6.2: reply recipient must match ch2.LocalId (1); pre-3.6.2 the
         // type-only stash accepted any matching type, masking this typo.
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildReply(PacketType.ChannelSuccess, 1)));

@@ -31,8 +31,8 @@ public class ChannelRequestEncodingTests
                 "signal" => channel.SignalAsync(value, ct),
                 _ => throw new InvalidOperationException(),
             };
-            RawPacket packet = await h.ServerReader.ReadPacketAsync(ct);
-            byte[] payload = packet.Payload;
+            using RawPacket packet = await h.ServerReader.ReadPacketAsync(ct);
+            byte[] payload = packet.Payload.ToArray();
             Assert.Equal(PacketType.ChannelRequest, packet.Type);
             Assert.Equal(42u, BinaryPrimitives.ReadUInt32BigEndian(payload.AsSpan(1)));
             int offset = 5;
@@ -74,7 +74,7 @@ public class ChannelRequestEncodingTests
         string value = "bad" + new string('\ud800', 1);
         CancellationToken ct = TestContext.Current.CancellationToken;
         Task send = subsystem ? channel.SubsystemAsync(value, ct) : channel.ExecAsync(value, ct);
-        _ = await h.ServerReader.ReadPacketAsync(ct);
+        (await h.ServerReader.ReadPacketAsync(ct)).Dispose();
         await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(
             PacketType.ChannelFailure, [(byte)PacketType.ChannelFailure, 0, 0, 0, 0]));
         SshException error = await Assert.ThrowsAsync<SshException>(() => send);

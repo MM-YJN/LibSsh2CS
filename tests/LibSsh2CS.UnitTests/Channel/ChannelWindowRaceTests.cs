@@ -194,14 +194,14 @@ public class ChannelWindowRaceTests
             int got = 0;
             while (got < TotalBytes)
             {
-                RawPacket pkt = await h.ServerReader.ReadPacketAsync(ct);
+                using RawPacket pkt = await h.ServerReader.ReadPacketAsync(ct);
                 Assert.Equal(PacketType.ChannelData, pkt.Type);
-                Assert.Equal(100u, BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.AsSpan(1, 4)));
+                Assert.Equal(100u, BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.Span.Slice(1, 4)));
                 Assert.Equal((uint)ChunkSize,
-                    BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.AsSpan(5, 4)));
+                    BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.Span.Slice(5, 4)));
                 Assert.Equal(
                     data.AsSpan(got, ChunkSize).ToArray(),
-                    pkt.Payload.AsSpan(9, ChunkSize).ToArray());
+                    pkt.Payload.Span.Slice(9, ChunkSize).ToArray());
                 got += ChunkSize;
 
                 if (got < TotalBytes)
@@ -303,11 +303,11 @@ public class ChannelWindowRaceTests
             {
                 while (true)
                 {
-                    RawPacket pkt = await h.ServerReader.ReadPacketAsync(counterCts.Token);
+                    using RawPacket pkt = await h.ServerReader.ReadPacketAsync(counterCts.Token);
                     if (pkt.Type == PacketType.ChannelWindowAdjust)
                     {
                         _ = Interlocked.Add(ref adjustBytes,
-                            BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.AsSpan(5, 4)));
+                            BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.Span.Slice(5, 4)));
                     }
                 }
             }

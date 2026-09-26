@@ -508,7 +508,7 @@ public static class SshUserAuth
     /// string under-reads (the C's <c>_libssh2_copy_string</c> failure) →
     /// ALLOC, and the <c>&gt;100</c> prompts gate → OUT_OF_BOUNDARY.
     /// </summary>
-    internal static SshKbdInfoRequest ParseInfoRequestPayload(byte[] payload)
+    internal static SshKbdInfoRequest ParseInfoRequestPayload(ReadOnlyMemory<byte> payload)
     {
         if (payload.Length < 17)
         {

@@ -22,19 +22,19 @@ public class SshChannelSetEnvTests
 
         Task t = ch.SetEnvAsync("FOO", "bar baz", TestContext.Current.CancellationToken);
 
-        RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelRequest, req.Type);
 
-        Assert.Equal((byte)PacketType.ChannelRequest, req.Payload[0]);
-        Assert.Equal(5u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(1, 4)));
-        Assert.Equal("env", ReadStringAt(req.Payload, 5));
+        Assert.Equal((byte)PacketType.ChannelRequest, req.Payload.Span[0]);
+        Assert.Equal(5u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(1, 4)));
+        Assert.Equal("env", ReadStringAt(req.Payload.ToArray(), 5));
 
         // After [string "env"]: offset 5 + 4 (strlen) + 3 ("env") = 12 → want_reply.
-        Assert.Equal(1, req.Payload[12]);
+        Assert.Equal(1, req.Payload.Span[12]);
 
-        Assert.Equal("FOO", ReadStringAt(req.Payload, 13));
+        Assert.Equal("FOO", ReadStringAt(req.Payload.ToArray(), 13));
         int valueOffset = 13 + 4 + 3;   // strlen + "FOO"
-        Assert.Equal("bar baz", ReadStringAt(req.Payload, valueOffset));
+        Assert.Equal("bar baz", ReadStringAt(req.Payload.ToArray(), valueOffset));
 
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildSimpleReplyPayload(PacketType.ChannelSuccess, 0)));
         h.CompleteInbound();
@@ -48,7 +48,7 @@ public class SshChannelSetEnvTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task t = ch.SetEnvAsync("PATH", "/bin:/usr/bin", TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildSimpleReplyPayload(PacketType.ChannelSuccess, 0)));
         h.CompleteInbound();
         await t;
@@ -62,7 +62,7 @@ public class SshChannelSetEnvTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task t = ch.SetEnvAsync("LANG", "C", TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelFailure, BuildSimpleReplyPayload(PacketType.ChannelFailure, 0)));
         h.CompleteInbound();
 
@@ -97,21 +97,21 @@ public class SshChannelSetEnvTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task t = ch.SetEnvAsync("GREETING", "héllo", TestContext.Current.CancellationToken);
-        RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
 
         // Parse the payload sequentially with a cursor.
         int o = 1 + 4;   // skip type + recip
-        Assert.Equal("env", ReadStringAt(req.Payload, o));
+        Assert.Equal("env", ReadStringAt(req.Payload.ToArray(), o));
         o += 4 + 3;      // skip strlen + "env"
         o += 1;          // skip want_reply
-        Assert.Equal("GREETING", ReadStringAt(req.Payload, o));
+        Assert.Equal("GREETING", ReadStringAt(req.Payload.ToArray(), o));
         o += 4 + 8;      // skip strlen + "GREETING"
 
         byte[] expectedValue = System.Text.Encoding.UTF8.GetBytes("héllo");
-        uint declaredLen = BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(o, 4));
+        uint declaredLen = BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(o, 4));
         Assert.Equal((uint)expectedValue.Length, declaredLen);
         byte[] actual = new byte[expectedValue.Length];
-        Buffer.BlockCopy(req.Payload, o + 4, actual, 0, actual.Length);
+        Buffer.BlockCopy(req.Payload.ToArray(), o + 4, actual, 0, actual.Length);
         Assert.Equal(expectedValue, actual);
 
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildSimpleReplyPayload(PacketType.ChannelSuccess, 0)));

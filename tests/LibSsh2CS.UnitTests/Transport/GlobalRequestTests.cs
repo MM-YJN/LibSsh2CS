@@ -141,16 +141,16 @@ public class GlobalRequestTests
         using var h = new GlobalRequestHarness();
 
         // No background pumper — the call must complete without one.
-        RawPacket reply = await h.Router.SendGlobalRequestAsync(
+        using RawPacket reply = await h.Router.SendGlobalRequestAsync(
             "keepalive@libssh2.org", default, wantReply: false,
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(default, reply);
 
         // The wire bytes should show want_reply=0.
-        RawPacket wirePkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket wirePkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.GlobalRequest, wirePkt.Type);
-        Assert.Equal(0, wirePkt.Payload[26]);
+        Assert.Equal(0, wirePkt.Payload.Span[26]);
     }
 
     [Fact]
@@ -165,9 +165,9 @@ public class GlobalRequestTests
             cancellationToken: TestContext.Current.CancellationToken));
 
         // Wait for the client to send the GLOBAL_REQUEST.
-        RawPacket sent = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket sent = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.GlobalRequest, sent.Type);
-        Assert.Equal(1, sent.Payload[26]);   // wantReply=1
+        Assert.Equal(1, sent.Payload.Span[26]);   // wantReply=1
 
         // Feed the reply: REQUEST_SUCCESS (81) with empty body.
         byte[] replyPayload = new byte[] { (byte)PacketType.RequestSuccess };
@@ -176,7 +176,7 @@ public class GlobalRequestTests
             TestContext.Current.CancellationToken);
         h.CompleteInbound();
 
-        RawPacket reply = await sendTask;
+        using RawPacket reply = await sendTask;
         Assert.Equal(PacketType.RequestSuccess, reply.Type);
     }
 
@@ -190,7 +190,7 @@ public class GlobalRequestTests
             cancellationToken: TestContext.Current.CancellationToken));
 
         // Let the GLOBAL_REQUEST hit the wire.
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
 
         // Feed a REQUEST_FAILURE (82).
         byte[] replyPayload = new byte[] { (byte)PacketType.RequestFailure };
@@ -214,7 +214,7 @@ public class GlobalRequestTests
             "tcpip-forward", default, wantReply: true,
             cancellationToken: TestContext.Current.CancellationToken));
 
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
 
         // Reply: REQUEST_SUCCESS with a u32 body = port 22222.
         byte[] replyPayload = new byte[5];
@@ -225,10 +225,10 @@ public class GlobalRequestTests
             TestContext.Current.CancellationToken);
         h.CompleteInbound();
 
-        RawPacket reply = await sendTask;
+        using RawPacket reply = await sendTask;
         Assert.Equal(PacketType.RequestSuccess, reply.Type);
         Assert.Equal(5, reply.Payload.Length);
-        Assert.Equal(22222u, BinaryPrimitives.ReadUInt32BigEndian(reply.Payload.AsSpan(1, 4)));
+        Assert.Equal(22222u, BinaryPrimitives.ReadUInt32BigEndian(reply.Payload.Span.Slice(1, 4)));
     }
 
     [Fact]
@@ -244,7 +244,7 @@ public class GlobalRequestTests
             cancellationToken: cts.Token));
 
         // Let the GLOBAL_REQUEST hit the wire, then cancel before replying.
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await cts.CancelAsync();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sendTask);
@@ -308,7 +308,7 @@ public class GlobalRequestTests
             cts.CancelAfter(TimeSpan.FromMilliseconds(300));
             try
             {
-                RawPacket p = await h.ServerReader.ReadPacketAsync(cts.Token);
+                using RawPacket p = await h.ServerReader.ReadPacketAsync(cts.Token);
                 outboundTypes.Add(p.Type);
             }
             catch (OperationCanceledException)
@@ -379,7 +379,7 @@ public class GlobalRequestTests
             cts.CancelAfter(TimeSpan.FromMilliseconds(300));
             try
             {
-                RawPacket p = await h.ServerReader.ReadPacketAsync(cts.Token);
+                using RawPacket p = await h.ServerReader.ReadPacketAsync(cts.Token);
                 outboundTypes.Add(p.Type);
             }
             catch (OperationCanceledException)
@@ -412,7 +412,7 @@ public class GlobalRequestTests
 
         Task<RawPacket> t1 = Task.Run(async () =>
         {
-            RawPacket result = await h.Router.SendGlobalRequestAsync(
+            using RawPacket result = await h.Router.SendGlobalRequestAsync(
                 "first-request", default, wantReply: true,
                 cancellationToken: cancellationToken);
             call1Done.TrySetResult(true);
@@ -421,7 +421,7 @@ public class GlobalRequestTests
 
         Task<RawPacket> t2 = Task.Run(async () =>
         {
-            RawPacket result = await h.Router.SendGlobalRequestAsync(
+            using RawPacket result = await h.Router.SendGlobalRequestAsync(
                 "second-request", default, wantReply: true,
                 cancellationToken: cancellationToken);
             call2Done.TrySetResult(true);
@@ -434,9 +434,9 @@ public class GlobalRequestTests
         await Task.WhenAny(t2, Task.Delay(50, cancellationToken));
 
         // Read the first GLOBAL_REQUEST off the wire.
-        RawPacket first = await h.ServerReader.ReadPacketAsync(cancellationToken);
+        using RawPacket first = await h.ServerReader.ReadPacketAsync(cancellationToken);
         Assert.Equal(PacketType.GlobalRequest, first.Type);
-        string firstName = ReadNameAt(first.Payload, 1);
+        string firstName = ReadNameAt(first.Payload.ToArray(), 1);
         Assert.True(firstName is "first-request" or "second-request");
 
         // Reply to whoever went first.
@@ -449,9 +449,9 @@ public class GlobalRequestTests
         await Task.WhenAny(Task.WhenAll(call1Done.Task, call2Done.Task), Task.Delay(500, cancellationToken));
 
         // Read the second GLOBAL_REQUEST.
-        RawPacket second = await h.ServerReader.ReadPacketAsync(cancellationToken);
+        using RawPacket second = await h.ServerReader.ReadPacketAsync(cancellationToken);
         Assert.Equal(PacketType.GlobalRequest, second.Type);
-        string secondName = ReadNameAt(second.Payload, 1);
+        string secondName = ReadNameAt(second.Payload.ToArray(), 1);
         Assert.True(secondName is "first-request" or "second-request");
         Assert.NotEqual(firstName, secondName);
 

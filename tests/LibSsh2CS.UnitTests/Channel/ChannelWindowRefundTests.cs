@@ -105,9 +105,9 @@ public class ChannelWindowRefundTests
         // WINDOW_ADJUST.
         await h.Router.WaitForStateChangeAsync(ch, null, ct);
 
-        RawPacket adjust = await h.ServerReader.ReadPacketAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(10), ct);
+        using RawPacket adjust = await h.ServerReader.ReadPacketAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(10), ct);
         Assert.Equal(PacketType.ChannelWindowAdjust, adjust.Type);
-        uint refunded = BinaryPrimitives.ReadUInt32BigEndian(adjust.Payload.AsSpan(5, 4));
+        uint refunded = BinaryPrimitives.ReadUInt32BigEndian(adjust.Payload.Span.Slice(5, 4));
 
         // packet.c:1008-1025 — refund = datalen − 13, window-truncated only
         // (the packet-size truncation is deliberately NOT applied in the
@@ -160,9 +160,9 @@ public class ChannelWindowRefundTests
 
         await h.Router.WaitForStateChangeAsync(ch, null, ct);
 
-        RawPacket adjust = await h.ServerReader.ReadPacketAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(10), ct);
+        using RawPacket adjust = await h.ServerReader.ReadPacketAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(10), ct);
         Assert.Equal(PacketType.ChannelWindowAdjust, adjust.Type);
-        uint refunded = BinaryPrimitives.ReadUInt32BigEndian(adjust.Payload.AsSpan(5, 4));
+        uint refunded = BinaryPrimitives.ReadUInt32BigEndian(adjust.Payload.Span.Slice(5, 4));
 
         // The refund is the window remainder (window − read_avail), the C's
         // packet.c:1003-1006 truncation. Pre-fix the InboundMaxPacket

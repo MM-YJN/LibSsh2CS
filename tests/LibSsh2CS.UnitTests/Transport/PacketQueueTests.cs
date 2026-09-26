@@ -27,10 +27,10 @@ public class PacketQueueTests
         byte[] kexinit = BuildCleartextPacket(PacketType.KexInit, [20]);
         PacketQueue q = BuildQueueWith(kexinit);
 
-        RawPacket got = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
+        using RawPacket got = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
 
         Assert.Equal(PacketType.KexInit, got.Type);
-        Assert.Equal((byte[])[20], got.Payload);
+        Assert.Equal((byte[])[20], got.Payload.ToArray());
     }
 
     [Fact]
@@ -44,7 +44,7 @@ public class PacketQueueTests
 
         // Wait for KEXINIT — the IGNORE packet is read first, inline-handled
         // (discarded), then KEXINIT is read and returned.
-        RawPacket got = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
+        using RawPacket got = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.KexInit, got.Type);
     }
 
@@ -62,12 +62,12 @@ public class PacketQueueTests
 
         // Wait for KEXINIT — NEWKEYS is stashed (not inline-handled; it's a
         // real protocol packet).
-        RawPacket kex = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
+        using RawPacket kex = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.KexInit, kex.Type);
 
         // Now wait for NEWKEYS — should come from the stash, no new read needed.
         // (The pipe is already completed, so a new read would throw SocketDisconnect.)
-        RawPacket nk = await q.WaitForTypeAsync(PacketType.NewKeys, TestContext.Current.CancellationToken);
+        using RawPacket nk = await q.WaitForTypeAsync(PacketType.NewKeys, TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.NewKeys, nk.Type);
     }
 
@@ -82,7 +82,7 @@ public class PacketQueueTests
         byte[] newkeys = BuildCleartextPacket(PacketType.NewKeys, [21]);
         PacketQueue q = BuildQueueWith([.. ignore, .. newkeys]);
 
-        RawPacket got = await q.WaitForTypesAsync(
+        using RawPacket got = await q.WaitForTypesAsync(
             [PacketType.KexInit, PacketType.NewKeys], TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.NewKeys, got.Type);
     }
@@ -128,7 +128,7 @@ public class PacketQueueTests
         byte[] kexinit = BuildCleartextPacket(PacketType.KexInit, [20]);
         PacketQueue q = BuildQueueWith([.. ignore, .. kexinit]);
 
-        RawPacket got = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
+        using RawPacket got = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.KexInit, got.Type);
     }
 
@@ -140,7 +140,7 @@ public class PacketQueueTests
         byte[] kexinit = BuildCleartextPacket(PacketType.KexInit, [20]);
         PacketQueue q = BuildQueueWith([.. debug, .. kexinit]);
 
-        RawPacket got = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
+        using RawPacket got = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.KexInit, got.Type);
     }
 
@@ -155,11 +155,11 @@ public class PacketQueueTests
         PacketQueue q = BuildQueueWith([.. extInfo, .. kexinit]);
 
         // Wait for KEXINIT — EXT_INFO is stashed inline.
-        RawPacket kex = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
+        using RawPacket kex = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.KexInit, kex.Type);
 
         // Now retrieve the stashed EXT_INFO.
-        RawPacket ext = await q.WaitForTypeAsync(PacketType.ExtInfo, TestContext.Current.CancellationToken);
+        using RawPacket ext = await q.WaitForTypeAsync(PacketType.ExtInfo, TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ExtInfo, ext.Type);
     }
 
@@ -199,7 +199,7 @@ public class PacketQueueTests
         q.StrictKex = true;
         q.InitialKex = true;
 
-        RawPacket got = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
+        using RawPacket got = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.KexInit, got.Type);
     }
 
@@ -303,11 +303,11 @@ public class PacketQueueTests
         q.InitialKex = false;  // post-KEX
 
         // Wait for KEXINIT — ChannelData is stashed (not a violation now).
-        RawPacket kex = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
+        using RawPacket kex = await q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.KexInit, kex.Type);
 
         // The stashed ChannelData is retrievable.
-        RawPacket cd = await q.WaitForTypeAsync(PacketType.ChannelData, TestContext.Current.CancellationToken);
+        using RawPacket cd = await q.WaitForTypeAsync(PacketType.ChannelData, TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelData, cd.Type);
     }
 

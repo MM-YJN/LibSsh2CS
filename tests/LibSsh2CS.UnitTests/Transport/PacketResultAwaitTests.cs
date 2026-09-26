@@ -27,12 +27,12 @@ public class PacketResultAwaitTests
         {
             await writer.WritePacketAsync(PacketType.ChannelData, first, ct);
         }
-        RawPacket packet1 = await read;
+        using RawPacket packet1 = await read;
         await writer.WritePacketAsync(PacketType.ChannelData, second, ct);
-        RawPacket packet2 = await reader.ReadPacketAsync(ct);
-        Assert.Equal(first, packet1.Payload);
-        Assert.Equal(second, packet2.Payload);
-        Assert.NotSame(packet1.Payload, packet2.Payload);
+        using RawPacket packet2 = await reader.ReadPacketAsync(ct);
+        Assert.Equal(first, packet1.Payload.ToArray());
+        Assert.Equal(second, packet2.Payload.ToArray());
+        Assert.NotEqual(packet1.Payload, packet2.Payload);
         Assert.Equal(0u, packet1.Seqno);
         Assert.Equal(1u, packet2.Seqno);
         await pipe.Writer.CompleteAsync();
@@ -71,9 +71,9 @@ public class PacketResultAwaitTests
         {
             await writer.WritePacketAsync(PacketType.ChannelSuccess, body, ct);
         }
-        RawPacket result = await wait;
+        using RawPacket result = await wait;
         Assert.Equal(PacketType.ChannelSuccess, result.Type);
-        Assert.Equal(body, result.Payload);
+        Assert.Equal(body, result.Payload.ToArray());
         await pipe.Writer.CompleteAsync();
         await pipe.Reader.CompleteAsync();
     }

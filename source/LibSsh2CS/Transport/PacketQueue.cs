@@ -53,7 +53,7 @@ namespace LibSsh2CS.Transport;
 /// codebase convention avoids.
 /// </para>
 /// </remarks>
-internal sealed class PacketQueue
+internal sealed class PacketQueue : IDisposable
 {
     private readonly PacketReader _reader;
 
@@ -73,6 +73,8 @@ internal sealed class PacketQueue
     /// fine there because the list is short).
     /// </summary>
     private readonly Dictionary<int, Queue<RawPacket>> _stash = [];
+    private readonly object _stashLock = new();
+    private bool _disposed;
 
     /// <summary>
     /// True iff strict-KEX was negotiated (server's kex name-list contained
@@ -111,6 +113,42 @@ internal sealed class PacketQueue
         _reader = reader;
     }
 
+    public void Dispose()
+    {
+        lock (_stashLock)
+        {
+            _disposed = true;
+            foreach (Queue<RawPacket> packets in _stash.Values)
+            {
+                foreach (RawPacket packet in packets)
+                {
+                    packet.Dispose();
+                }
+            }
+            _stash.Clear();
+        }
+    }
+
+    private void ThrowIfDisposed()
+    {
+        lock (_stashLock)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+        }
+    }
+
+    private void CheckReadPacket(RawPacket packet)
+    {
+        lock (_stashLock)
+        {
+            if (_disposed)
+            {
+                packet.Dispose();
+                throw new ObjectDisposedException(nameof(PacketQueue));
+            }
+        }
+    }
+
     /// <summary>
     /// Parses a DEBUG payload: <c>[4][bool always_display][string message]
     /// [string language]</c> (RFC 4252 §5.3). When the packet is too short
@@ -119,14 +157,14 @@ internal sealed class PacketQueue
     /// malformed string (declared length beyond the payload) is likewise
     /// surfaced as empty (the C's <c>_libssh2_get_string</c> failure).
     /// </summary>
-    private static (bool AlwaysDisplay, string Message, string Language) ParseDebugMessage(byte[] payload)
+    private static (bool AlwaysDisplay, string Message, string Language) ParseDebugMessage(ReadOnlyMemory<byte> payload)
     {
         if (payload.Length < 2)
         {
             return (false, string.Empty, string.Empty);
         }
 
-        bool alwaysDisplay = payload[1] != 0;
+        bool alwaysDisplay = payload.Span[1] != 0;
         if (payload.Length < 6)
         {
             return (alwaysDisplay, string.Empty, string.Empty);
@@ -308,7 +346,9 @@ internal sealed class PacketQueue
         {
             while (true)
             {
+                ThrowIfDisposed();
                 RawPacket pkt = await _reader.ReadPacketAsync(waitToken).ConfigureAwait(false);
+                CheckReadPacket(pkt);
                 if (pkt.Type == type)
                 {
                     return pkt;
@@ -323,6 +363,7 @@ internal sealed class PacketQueue
                 // dispatch runs only when the strict rule does not apply.
                 if (StrictKex && InitialKex)
                 {
+                    pkt.Dispose();
                     throw new SshException(SshErrorCode.SocketDisconnect,
                         "strict KEX violation: unexpected packet type");
                 }
@@ -392,7 +433,9 @@ internal sealed class PacketQueue
         {
             while (true)
             {
+                ThrowIfDisposed();
                 RawPacket pkt = await _reader.ReadPacketAsync(waitToken).ConfigureAwait(false);
+                CheckReadPacket(pkt);
                 if (Array.IndexOf(types, pkt.Type) >= 0)
                 {
                     return pkt;
@@ -430,19 +473,23 @@ internal sealed class PacketQueue
     /// </summary>
     public bool TryTakeStashed(int type, out RawPacket packet)
     {
-        if (_stash.TryGetValue(type, out Queue<RawPacket>? q) && q.Count > 0)
+        lock (_stashLock)
         {
-            packet = q.Dequeue();
-            if (q.Count == 0)
+
+            if (_stash.TryGetValue(type, out Queue<RawPacket>? q) && q.Count > 0)
             {
-                _stash.Remove(type);
+                packet = q.Dequeue();
+                if (q.Count == 0)
+                {
+                    _stash.Remove(type);
+                }
+
+                return true;
             }
 
-            return true;
+            packet = default;
+            return false;
         }
-
-        packet = default;
-        return false;
     }
 
     /// <summary>
@@ -464,8 +511,8 @@ internal sealed class PacketQueue
     /// await — so this method is async.
     /// </remarks>
     /// <param name="cancellationToken">Inherited from the calling pumper.</param>
-    /// <returns>A <see cref="RawPacket"/> whose <see cref="RawPacket.Payload"/>
-    /// is non-null if a packet was read; otherwise <c>default</c>.</returns>
+    /// <returns>A <see cref="RawPacket"/> whose <see cref="RawPacket.HasPacket"/>
+    /// is true if a packet was read; otherwise <c>default</c>.</returns>
     public async ValueTask<RawPacket> TryTakeAvailableAsync(CancellationToken cancellationToken)
     {
         // Loop instead of recurse. A flood of inline-handled
@@ -474,6 +521,7 @@ internal sealed class PacketQueue
         // unboundedly via the prior recursive call.
         while (true)
         {
+            ThrowIfDisposed();
             if (!_reader.TryReadPacket(out RawPacket pkt, out bool isCompleted))
             {
                 // No full packet immediately available. Either the pipe is empty
@@ -484,6 +532,8 @@ internal sealed class PacketQueue
                 _ = isCompleted;
                 return default;
             }
+
+            CheckReadPacket(pkt);
 
             // Apply the same inline dispatch as WaitForTypesAsync. If the packet
             // is consumed inline (DISCONNECT/IGNORE/DEBUG/EXT_INFO/server-KEXINIT),
@@ -504,13 +554,22 @@ internal sealed class PacketQueue
     /// </summary>
     private void AddStash(RawPacket packet)
     {
-        if (!_stash.TryGetValue(packet.Type, out Queue<RawPacket>? q))
+        lock (_stashLock)
         {
-            q = new Queue<RawPacket>();
-            _stash[packet.Type] = q;
-        }
+            if (_disposed)
+            {
+                packet.Dispose();
+                return;
+            }
 
-        q.Enqueue(packet);
+            if (!_stash.TryGetValue(packet.Type, out Queue<RawPacket>? q))
+            {
+                q = new Queue<RawPacket>();
+                _stash[packet.Type] = q;
+            }
+
+            q.Enqueue(packet);
+        }
     }
 
     /// <summary>
@@ -568,7 +627,7 @@ internal sealed class PacketQueue
                 if (IgnoreCallback is { } onIgnore)
                 {
                     onIgnore(packet.Payload.Length > 1
-                        ? packet.Payload.AsMemory(1)
+                        ? packet.Payload.Slice(1)
                         : ReadOnlyMemory<byte>.Empty);
                 }
 
@@ -638,7 +697,7 @@ internal sealed class PacketQueue
     /// language</c>. The payload begins with the type byte (1). Returns a
     /// formatted string for the exception message.
     /// </summary>
-    private static string ParseDisconnectDescription(byte[] payload)
+    private static string ParseDisconnectDescription(ReadOnlyMemory<byte> payload)
     {
         if (payload.Length < 1 + 4 + 4)
         {

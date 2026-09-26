@@ -28,14 +28,14 @@ public class SshChannelProcessStartupTests
 
         Task shellTask = ch.ShellAsync(TestContext.Current.CancellationToken);
 
-        RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelRequest, req.Type);
-        Assert.Equal((byte)PacketType.ChannelRequest, req.Payload[0]);
-        Assert.Equal(42u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(1, 4)));
-        Assert.Equal("shell", ReadStringAt(req.Payload, 5));
+        Assert.Equal((byte)PacketType.ChannelRequest, req.Payload.Span[0]);
+        Assert.Equal(42u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(1, 4)));
+        Assert.Equal("shell", ReadStringAt(req.Payload.ToArray(), 5));
 
         // offset 5 + 4 (strlen) + 5 ("shell") = 14 → want_reply byte.
-        Assert.Equal(1, req.Payload[14]);
+        Assert.Equal(1, req.Payload.Span[14]);
 
         // Total payload length: 1 (type) + 4 (recip) + 4+5 ("shell") + 1 = 15.
         // No [u32 msglen][msg] trailer.
@@ -53,7 +53,7 @@ public class SshChannelProcessStartupTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task t = ch.ShellAsync(TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildSimpleReplyPayload(PacketType.ChannelSuccess, 0)));
         h.CompleteInbound();
         await t;
@@ -67,7 +67,7 @@ public class SshChannelProcessStartupTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task t = ch.ShellAsync(TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelFailure, BuildSimpleReplyPayload(PacketType.ChannelFailure, 0)));
         h.CompleteInbound();
 
@@ -86,14 +86,14 @@ public class SshChannelProcessStartupTests
 
         Task t = ch.SubsystemAsync("sftp", TestContext.Current.CancellationToken);
 
-        RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelRequest, req.Type);
-        Assert.Equal(7u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(1, 4)));
-        Assert.Equal("subsystem", ReadStringAt(req.Payload, 5));
+        Assert.Equal(7u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(1, 4)));
+        Assert.Equal("subsystem", ReadStringAt(req.Payload.ToArray(), 5));
 
         // After [string "subsystem"]: offset 5 + 4 (strlen) + 9 ("subsystem") = 18 → want_reply.
-        Assert.Equal(1, req.Payload[18]);
-        Assert.Equal("sftp", ReadStringAt(req.Payload, 19));
+        Assert.Equal(1, req.Payload.Span[18]);
+        Assert.Equal("sftp", ReadStringAt(req.Payload.ToArray(), 19));
 
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildSimpleReplyPayload(PacketType.ChannelSuccess, 0)));
         h.CompleteInbound();
@@ -107,7 +107,7 @@ public class SshChannelProcessStartupTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task t = ch.SubsystemAsync("sftp", TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelFailure, BuildSimpleReplyPayload(PacketType.ChannelFailure, 0)));
         h.CompleteInbound();
 
@@ -134,7 +134,7 @@ public class SshChannelProcessStartupTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task execTask = ch.ExecAsync("first", TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildSimpleReplyPayload(PacketType.ChannelSuccess, 0)));
         h.CompleteInbound();
         await execTask;
@@ -152,7 +152,7 @@ public class SshChannelProcessStartupTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task shellTask = ch.ShellAsync(TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelFailure, BuildSimpleReplyPayload(PacketType.ChannelFailure, 0)));
         h.CompleteInbound();
         await Assert.ThrowsAsync<SshException>(async () => await shellTask);
@@ -168,7 +168,7 @@ public class SshChannelProcessStartupTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task shellTask = ch.ShellAsync(TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildSimpleReplyPayload(PacketType.ChannelSuccess, 0)));
         h.CompleteInbound();
         await shellTask;

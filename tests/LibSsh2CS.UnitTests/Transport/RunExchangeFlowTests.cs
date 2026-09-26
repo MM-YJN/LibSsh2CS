@@ -1,3 +1,5 @@
+#pragma warning disable CA2025 // Exchange tasks are awaited before packet using scopes end; packet leases do not own queue/writer state.
+
 using System.Buffers.Binary;
 using System.IO.Pipelines;
 using System.Security.Cryptography;
@@ -51,8 +53,8 @@ public class RunExchangeFlowTests
             }, cancellationToken: ct);
         await using var serverReader = new PacketReader(outbound.Reader);
         await using var serverWriter = new PacketWriter(inbound.Writer);
-        RawPacket init = await serverReader.ReadPacketAsync(ct);
-        byte[] e = ExtractString(init.Payload, 1);
+        using RawPacket init = await serverReader.ReadPacketAsync(ct);
+        byte[] e = ExtractString(init.Payload.ToArray(), 1);
         await serverWriter.WritePacketAsync(PacketType.KexDhReply, BuildKexReply(hostKey, raw, [1]), ct);
         SshException ex = await Assert.ThrowsAsync<SshException>(() => exchange);
         Assert.Equal(SshErrorCode.KeyExchangeFailure, ex.ErrorCode);
@@ -99,9 +101,9 @@ public class RunExchangeFlowTests
         var serverWriter = new PacketWriter(pipes[S2C].Writer);
 
         // (a) read KEXDH_INIT, extract Q_C
-        RawPacket init = await serverReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket init = await serverReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.KexDhInit, init.Type);
-        byte[] qC = ExtractString(init.Payload, 1);
+        byte[] qC = ExtractString(init.Payload.ToArray(), 1);
 
         // (b) server curve25519 keypair + shared secret
         var serverKp = new Curve25519KeyExchange();
@@ -116,7 +118,7 @@ public class RunExchangeFlowTests
             BuildKexReply(hostKey, qS, sig), TestContext.Current.CancellationToken);
 
         // (d) read client NEWKEYS
-        RawPacket nk1 = await serverReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket nk1 = await serverReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.NewKeys, nk1.Type);
 
         // (e) send server NEWKEYS
@@ -154,9 +156,9 @@ public class RunExchangeFlowTests
         await clientWriter.WritePacketAsync(PacketType.ServiceRequest, servicePayload,
             TestContext.Current.CancellationToken);
 
-        RawPacket svc = await serverReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket svc = await serverReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ServiceRequest, svc.Type);
-        Assert.Equal(servicePayload, svc.Payload);
+        Assert.Equal(servicePayload, svc.Payload.ToArray());
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -195,8 +197,8 @@ public class RunExchangeFlowTests
         var serverReader = new PacketReader(pipes[C2S].Reader);
         var serverWriter = new PacketWriter(pipes[S2C].Writer);
 
-        byte[] qC = ExtractString(
-            (await serverReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Payload, 1);
+        using RawPacket qCPacket = await serverReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        byte[] qC = ExtractString(qCPacket.Payload.ToArray(), 1);
         var serverKp = new Curve25519KeyExchange();
         byte[] qS = serverKp.PublicKey;
         System.Numerics.BigInteger k = Endian.BigIntegerFromBigEndian(serverKp.ComputeSharedSecret(qC));
@@ -213,8 +215,8 @@ public class RunExchangeFlowTests
             BuildKexReply(hostKey, qS, sigBlob), TestContext.Current.CancellationToken);
 
         // Client verifies, sends NEWKEYS; server answers NEWKEYS.
-        Assert.Equal(PacketType.NewKeys,
-            (await serverReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Type);
+        using RawPacket receivedPacket1 = await serverReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(PacketType.NewKeys, receivedPacket1.Type);
         await serverWriter.WritePacketAsync(PacketType.NewKeys,
             new byte[] { (byte)PacketType.NewKeys }, TestContext.Current.CancellationToken);
 
@@ -245,8 +247,8 @@ public class RunExchangeFlowTests
         var serverWriter = new PacketWriter(pipes[S2C].Writer);
         var serverReader = new PacketReader(pipes[C2S].Reader);
 
-        byte[] qC = ExtractString(
-            (await serverReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Payload, 1);
+        using RawPacket qCPacket = await serverReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        byte[] qC = ExtractString(qCPacket.Payload.ToArray(), 1);
         var serverKp = new Curve25519KeyExchange();
         byte[] qS = serverKp.PublicKey;
         System.Numerics.BigInteger k = Endian.BigIntegerFromBigEndian(serverKp.ComputeSharedSecret(qC));
@@ -426,8 +428,8 @@ public class RunExchangeFlowTests
         var serverReader1 = new PacketReader(pipes[C2S].Reader);
         var serverWriter1 = new PacketWriter(pipes[S2C].Writer);
 
-        byte[] qC1 = ExtractString(
-            (await serverReader1.ReadPacketAsync(TestContext.Current.CancellationToken)).Payload, 1);
+        using RawPacket qC1Packet = await serverReader1.ReadPacketAsync(TestContext.Current.CancellationToken);
+        byte[] qC1 = ExtractString(qC1Packet.Payload.ToArray(), 1);
         var serverKp1 = new Curve25519KeyExchange();
         byte[] qS1 = serverKp1.PublicKey;
         System.Numerics.BigInteger k1 = Endian.BigIntegerFromBigEndian(serverKp1.ComputeSharedSecret(qC1));
@@ -436,8 +438,8 @@ public class RunExchangeFlowTests
         byte[] sig = [(byte)'X'];
         await serverWriter1.WritePacketAsync(PacketType.KexDhReply,
             BuildKexReply(hostKey, qS1, sig), TestContext.Current.CancellationToken);
-        Assert.Equal(PacketType.NewKeys,
-            (await serverReader1.ReadPacketAsync(TestContext.Current.CancellationToken)).Type);
+        using RawPacket receivedPacket2 = await serverReader1.ReadPacketAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(PacketType.NewKeys, receivedPacket2.Type);
         await serverWriter1.WritePacketAsync(PacketType.NewKeys,
             new byte[] { (byte)PacketType.NewKeys }, TestContext.Current.CancellationToken);
 
@@ -462,16 +464,16 @@ public class RunExchangeFlowTests
         var serverReader2 = new PacketReader(pipes2[C2S].Reader);
         var serverWriter2 = new PacketWriter(pipes2[S2C].Writer);
 
-        byte[] qC2 = ExtractString(
-            (await serverReader2.ReadPacketAsync(TestContext.Current.CancellationToken)).Payload, 1);
+        using RawPacket qC2Packet = await serverReader2.ReadPacketAsync(TestContext.Current.CancellationToken);
+        byte[] qC2 = ExtractString(qC2Packet.Payload.ToArray(), 1);
         var serverKp2 = new Curve25519KeyExchange();
         byte[] qS2 = serverKp2.PublicKey;
         System.Numerics.BigInteger k2 = Endian.BigIntegerFromBigEndian(serverKp2.ComputeSharedSecret(qC2));
 
         await serverWriter2.WritePacketAsync(PacketType.KexDhReply,
             BuildKexReply(hostKey, qS2, sig), TestContext.Current.CancellationToken);
-        Assert.Equal(PacketType.NewKeys,
-            (await serverReader2.ReadPacketAsync(TestContext.Current.CancellationToken)).Type);
+        using RawPacket receivedPacket3 = await serverReader2.ReadPacketAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(PacketType.NewKeys, receivedPacket3.Type);
         await serverWriter2.WritePacketAsync(PacketType.NewKeys,
             new byte[] { (byte)PacketType.NewKeys }, TestContext.Current.CancellationToken);
 
@@ -496,8 +498,8 @@ public class RunExchangeFlowTests
         byte[] payload2 = new byte[] { PacketType.ServiceRequest, (byte)'y', 0, 0, 0, 1, (byte)'z' };
         await clientWriter2.WritePacketAsync(PacketType.ServiceRequest, payload2,
             TestContext.Current.CancellationToken);
-        RawPacket svc2 = await serverReader2.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket svc2 = await serverReader2.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ServiceRequest, svc2.Type);
-        Assert.Equal(payload2, svc2.Payload);
+        Assert.Equal(payload2, svc2.Payload.ToArray());
     }
 }

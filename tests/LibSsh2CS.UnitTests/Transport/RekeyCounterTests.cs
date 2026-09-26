@@ -40,11 +40,11 @@ public class RekeyCounterTests
         byte[] p2 = BuildCleartextPacket(PacketType.Ignore, [2, 0xBB, 0xCC]);
         var reader = new PacketReader(await BuildPipeWithBytesAsync([.. p1, .. p2]));
 
-        RawPacket r1 = await reader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket r1 = await reader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(p1.Length, reader.InboundBytes);
         Assert.Equal(1, reader.InboundPackets);
 
-        RawPacket r2 = await reader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket r2 = await reader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(p1.Length + p2.Length, reader.InboundBytes);
         Assert.Equal(2, reader.InboundPackets);
 
@@ -187,7 +187,7 @@ public class RekeyCounterTests
         Assert.Equal(2, writer.OutboundPackets);
         Assert.Equal(0, reader.InboundPackets);
 
-        _ = await reader.ReadPacketAsync(cancellationToken);
+        (await reader.ReadPacketAsync(cancellationToken)).Dispose();
         Assert.Equal(1, reader.InboundPackets);
         Assert.Equal(2, writer.OutboundPackets);
 

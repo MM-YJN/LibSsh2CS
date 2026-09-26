@@ -25,14 +25,14 @@ public class SshChannelCloseTests
         Task closeTask = ch.DisposeAsync().AsTask();
 
         // First wire packet: EOF.
-        RawPacket eof = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket eof = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelEof, eof.Type);
-        Assert.Equal(9u, BinaryPrimitives.ReadUInt32BigEndian(eof.Payload.AsSpan(1, 4)));
+        Assert.Equal(9u, BinaryPrimitives.ReadUInt32BigEndian(eof.Payload.Span.Slice(1, 4)));
 
         // Second wire packet: CLOSE.
-        RawPacket close = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket close = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelClose, close.Type);
-        Assert.Equal(9u, BinaryPrimitives.ReadUInt32BigEndian(close.Payload.AsSpan(1, 4)));
+        Assert.Equal(9u, BinaryPrimitives.ReadUInt32BigEndian(close.Payload.Span.Slice(1, 4)));
 
         // DisposeAsync is now waiting for the peer's CLOSE. Send it.
         await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(PacketType.ChannelClose,
@@ -58,8 +58,8 @@ public class SshChannelCloseTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 9);
 
         Task closeTask = ch.DisposeAsync().AsTask();
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // EOF
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // CLOSE
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // EOF
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // CLOSE
         await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(PacketType.ChannelClose,
             ChannelTestHarness.BuildClosePayload(0)));
         h.CompleteInbound();
@@ -82,8 +82,8 @@ public class SshChannelCloseTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 9);
 
         Task closeTask = ch.DisposeAsync().AsTask();
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // EOF
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // CLOSE
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // EOF
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // CLOSE
         await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(PacketType.ChannelClose,
             ChannelTestHarness.BuildClosePayload(0)));
         h.CompleteInbound();
@@ -104,8 +104,8 @@ public class SshChannelCloseTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 9);
 
         Task closeTask = ch.DisposeAsync().AsTask();
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // EOF
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // CLOSE
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // EOF
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // CLOSE
 
         // The close is pending (waiting for peer CLOSE). It must not complete
         // until we send the peer's CLOSE.
@@ -129,8 +129,8 @@ public class SshChannelCloseTests
         SshChannel chOther = h.CreateChannel(localId: 1, remoteId: 10);
 
         Task closeTask = chClose.DisposeAsync().AsTask();
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // EOF
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // CLOSE
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // EOF
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // CLOSE
 
         // Feed: DATA for chOther, then CLOSE for chClose.
         await h.FeedInboundAsync(
@@ -157,8 +157,8 @@ public class SshChannelCloseTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 9);
 
         Task closeTask = ch.DisposeAsync().AsTask();
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // EOF
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // CLOSE
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // EOF
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // CLOSE
         await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(PacketType.ChannelClose,
             ChannelTestHarness.BuildClosePayload(0)));
         h.CompleteInbound();
@@ -178,8 +178,8 @@ public class SshChannelCloseTests
 
         // Complete the close handshake first.
         Task closeTask = ch.DisposeAsync().AsTask();
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(PacketType.ChannelClose,
             ChannelTestHarness.BuildClosePayload(0)));
         h.CompleteInbound();
@@ -198,8 +198,8 @@ public class SshChannelCloseTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 9);
 
         Task closeTask = ch.DisposeAsync().AsTask();
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(PacketType.ChannelClose,
             ChannelTestHarness.BuildClosePayload(0)));
         h.CompleteInbound();

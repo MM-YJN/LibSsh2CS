@@ -54,10 +54,10 @@ public class PacketReaderTests
         // Read them all and assert each matches the fixture plaintext byte-for-byte.
         for (int i = 0; i < fx.Packets.Count; i++)
         {
-            RawPacket got = await reader.ReadPacketAsync(TestContext.Current.CancellationToken);
+            using RawPacket got = await reader.ReadPacketAsync(TestContext.Current.CancellationToken);
             byte[] expected = fx.Packets[i].Plaintext;
             Assert.True(got.Payload.Length > 0, $"packet {i}: empty payload");
-            Assert.Equal(expected, got.Payload);
+            Assert.Equal(expected, got.Payload.ToArray());
             // seqno starts at 0 post-NEWKEYS and increments per packet (matches
             // the oracle, which captured from seqno 0).
             Assert.Equal((uint)i, got.Seqno);
@@ -221,11 +221,11 @@ public class PacketReaderTests
         var reader = new PacketReader(BuildPipeWithBytes(frame));
         ConfigureCtrReader(reader, mac);
 
-        RawPacket pkt = await reader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket pkt = await reader.ReadPacketAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(0u, pkt.Seqno);
         Assert.Equal(60, pkt.Type);
-        Assert.Equal((byte[])[60, 61], pkt.Payload);
+        Assert.Equal((byte[])[60, 61], pkt.Payload.ToArray());
     }
 
     // ── AES-GCM total_num bound (transport.c:627-628, 665-667) ──────────
@@ -254,7 +254,7 @@ public class PacketReaderTests
         var reader = new PacketReader(BuildPipeWithBytes(frame));
         ConfigureGcmReader(reader);
 
-        RawPacket pkt = await reader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket pkt = await reader.ReadPacketAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(60, pkt.Type);
         Assert.Equal(PacketLength - 1 - PaddingLength, pkt.Payload.Length);
@@ -289,13 +289,13 @@ public class PacketReaderTests
 
         var reader = new PacketReader(BuildPipeWithBytes(both));
 
-        RawPacket r1 = await reader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket r1 = await reader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(50, r1.Type);
-        Assert.Equal((byte[])[50, 1, 2, 3], r1.Payload);
+        Assert.Equal((byte[])[50, 1, 2, 3], r1.Payload.ToArray());
 
-        RawPacket r2 = await reader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket r2 = await reader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(51, r2.Type);
-        Assert.Equal((byte[])[51, 4, 5], r2.Payload);
+        Assert.Equal((byte[])[51, 4, 5], r2.Payload.ToArray());
     }
 
     // ── seqno ──────────────────────────────────────────────────────────

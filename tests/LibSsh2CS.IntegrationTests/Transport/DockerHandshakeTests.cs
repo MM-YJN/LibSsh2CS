@@ -229,9 +229,9 @@ public sealed class DockerHandshakeTests : IDisposable
         await writer.WritePacketAsync(PacketType.KexInit, clientKexInit, ct).ConfigureAwait(false);
 
         // Server KEXINIT.
-        RawPacket serverKexInitPkt = await queue.WaitForTypeAsync(PacketType.KexInit, ct)
+        using RawPacket serverKexInitPkt = await queue.WaitForTypeAsync(PacketType.KexInit, ct)
             .ConfigureAwait(false);
-        byte[] serverKexInit = serverKexInitPkt.Payload;   // includes the type byte
+        byte[] serverKexInit = serverKexInitPkt.Payload.ToArray();   // includes the type byte
 
         KexInit clientInit = KeyExchange.ParseKexInit(clientKexInit);
         KexInit serverInit = KeyExchange.ParseKexInit(serverKexInit);

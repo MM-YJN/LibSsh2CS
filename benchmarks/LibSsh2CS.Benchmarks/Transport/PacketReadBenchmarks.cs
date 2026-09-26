@@ -95,7 +95,7 @@ public class PacketReadBenchmarks
     [Benchmark]
     public async Task<int> ReadPacket()
     {
-        RawPacket packet = await _reader.ReadPacketAsync(CancellationToken.None).ConfigureAwait(false);
+        using RawPacket packet = await _reader.ReadPacketAsync(CancellationToken.None).ConfigureAwait(false);
         return packet.Payload.Length;
     }
 

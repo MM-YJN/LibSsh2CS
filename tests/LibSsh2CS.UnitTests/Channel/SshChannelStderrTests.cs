@@ -180,10 +180,10 @@ public class SshChannelStderrTests
         Task setTask = ch.SetExtendedDataModeAsync(SshExtendedDataMode.Ignore, TestContext.Current.CancellationToken);
 
         // Expect a WINDOW_ADJUST on the wire for the 4 freed bytes.
-        RawPacket adjust = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket adjust = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelWindowAdjust, adjust.Type);
-        Assert.Equal(11u, BinaryPrimitives.ReadUInt32BigEndian(adjust.Payload.AsSpan(1, 4)));
-        Assert.Equal(4u, BinaryPrimitives.ReadUInt32BigEndian(adjust.Payload.AsSpan(5, 4)));
+        Assert.Equal(11u, BinaryPrimitives.ReadUInt32BigEndian(adjust.Payload.Span.Slice(1, 4)));
+        Assert.Equal(4u, BinaryPrimitives.ReadUInt32BigEndian(adjust.Payload.Span.Slice(5, 4)));
 
         await setTask;
 
@@ -223,10 +223,10 @@ public class SshChannelStderrTests
             }
         }, cancellationToken);
 
-        RawPacket adjust = await h.ServerReader.ReadPacketAsync(cancellationToken);
+        using RawPacket adjust = await h.ServerReader.ReadPacketAsync(cancellationToken);
         Assert.Equal(PacketType.ChannelWindowAdjust, adjust.Type);
-        Assert.Equal(5u, BinaryPrimitives.ReadUInt32BigEndian(adjust.Payload.AsSpan(1, 4)));
-        Assert.Equal(3u, BinaryPrimitives.ReadUInt32BigEndian(adjust.Payload.AsSpan(5, 4)));
+        Assert.Equal(5u, BinaryPrimitives.ReadUInt32BigEndian(adjust.Payload.Span.Slice(1, 4)));
+        Assert.Equal(3u, BinaryPrimitives.ReadUInt32BigEndian(adjust.Payload.Span.Slice(5, 4)));
 
         await pumpTask;
 
@@ -263,7 +263,7 @@ public class SshChannelStderrTests
         }, cancellationToken);
 
         // Drain the WINDOW_ADJUST from the stderr drop.
-        _ = await h.ServerReader.ReadPacketAsync(cancellationToken);
+        (await h.ServerReader.ReadPacketAsync(cancellationToken)).Dispose();
         await pumpTask;
 
         byte[] buf = new byte[4];

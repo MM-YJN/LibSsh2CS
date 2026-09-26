@@ -38,9 +38,9 @@ public class ChannelDisposeRaceTests
 
         // Wait until the first EOF + CLOSE are on the wire (the first disposer
         // is now parked in the peer-close wait).
-        RawPacket eof1 = await h.ServerReader.ReadPacketAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(10), ct);
+        using RawPacket eof1 = await h.ServerReader.ReadPacketAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(10), ct);
         Assert.Equal(PacketType.ChannelEof, eof1.Type);
-        RawPacket close1 = await h.ServerReader.ReadPacketAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(10), ct);
+        using RawPacket close1 = await h.ServerReader.ReadPacketAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(10), ct);
         Assert.Equal(PacketType.ChannelClose, close1.Type);
 
         // Second concurrent disposer: pre-fix it sees _localClose == false

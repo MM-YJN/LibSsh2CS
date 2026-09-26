@@ -31,9 +31,9 @@ public class ChannelFlowTests
         Task<SshChannel> openTask = SshChannel.OpenAsync(
             h.ClientWriter, h.Router, TestContext.Current.CancellationToken);
 
-        RawPacket openPkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket openPkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelOpen, openPkt.Type);
-        Assert.Equal("session", ReadStringAt(openPkt.Payload, 1));
+        Assert.Equal("session", ReadStringAt(openPkt.Payload.ToArray(), 1));
 
         await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(PacketType.ChannelOpenConfirmation,
             ChannelTestHarness.BuildOpenConfirmationPayload(
@@ -45,10 +45,10 @@ public class ChannelFlowTests
         // ── 2. Exec ─────────────────────────────────────────────────────────
         Task execTask = ch.ExecAsync("git-upload-pack '/repo.git'", TestContext.Current.CancellationToken);
 
-        RawPacket execPkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket execPkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelRequest, execPkt.Type);
-        Assert.Equal("exec", ReadStringAt(execPkt.Payload, 5));
-        Assert.Equal(1, execPkt.Payload[13]);   // want_reply = TRUE
+        Assert.Equal("exec", ReadStringAt(execPkt.Payload.ToArray(), 5));
+        Assert.Equal(1, execPkt.Payload.Span[13]);   // want_reply = TRUE
 
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess,
             BuildReply(PacketType.ChannelSuccess, 0)));
@@ -58,10 +58,10 @@ public class ChannelFlowTests
         byte[] stdin = Encoding.UTF8.GetBytes("want-list");
         await ch.WriteAsync(stdin, TestContext.Current.CancellationToken);
 
-        RawPacket dataPkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket dataPkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelData, dataPkt.Type);
-        Assert.Equal(ServerChId, BinaryPrimitives.ReadUInt32BigEndian(dataPkt.Payload.AsSpan(1, 4)));
-        Assert.Equal(stdin, dataPkt.Payload.AsSpan(9, stdin.Length).ToArray());
+        Assert.Equal(ServerChId, BinaryPrimitives.ReadUInt32BigEndian(dataPkt.Payload.Span.Slice(1, 4)));
+        Assert.Equal(stdin, dataPkt.Payload.Span.Slice(9, stdin.Length).ToArray());
 
         // ── 4. Read (server → client) ──────────────────────────────────────
         byte[] replyBytes = Encoding.UTF8.GetBytes("have-list\n");
@@ -79,10 +79,10 @@ public class ChannelFlowTests
         Task closeTask = ch.DisposeAsync().AsTask();
 
         // Server reads EOF then CLOSE (D1: close sends EOF-if-not-sent first).
-        Assert.Equal(PacketType.ChannelEof,
-            (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Type);
-        Assert.Equal(PacketType.ChannelClose,
-            (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Type);
+        using RawPacket receivedPacket1 = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(PacketType.ChannelEof, receivedPacket1.Type);
+        using RawPacket receivedPacket2 = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(PacketType.ChannelClose, receivedPacket2.Type);
 
         // Server replies with its CLOSE; the client's close handshake completes.
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelClose,
@@ -106,8 +106,8 @@ public class ChannelFlowTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 7);
 
         Task closeTask = ch.DisposeAsync().AsTask();
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // EOF
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // CLOSE
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // EOF
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // CLOSE
 
         // Server sends exit-status THEN its CLOSE — interleaved.
         await h.FeedInboundAsync(
@@ -151,8 +151,8 @@ public class ChannelFlowTests
 
         // Close A; B remains usable.
         Task closeA = chA.DisposeAsync().AsTask();
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // EOF
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // CLOSE
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // EOF
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // CLOSE
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelClose, ChannelTestHarness.BuildClosePayload(0)));
         h.CompleteInbound();
         await closeA;

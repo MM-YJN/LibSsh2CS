@@ -39,12 +39,12 @@ public class PasswordChangeFlowTests
             ct);
 
         // First request is the ordinary password request.
-        RawPacket first = await mock.ServerPacketReader!.ReadPacketAsync(ct);
+        using RawPacket first = await mock.ServerPacketReader!.ReadPacketAsync(ct);
         Assert.Equal(PacketType.UserauthRequest, first.Type);
         await SendChangeRequestAsync(mock, ct);
 
         // Second request is the change-password request.
-        RawPacket second = await mock.ServerPacketReader!.ReadPacketAsync(ct);
+        using RawPacket second = await mock.ServerPacketReader!.ReadPacketAsync(ct);
         Assert.Equal(PacketType.UserauthRequest, second.Type);
         await SendChangeRequestAsync(mock, ct);
 

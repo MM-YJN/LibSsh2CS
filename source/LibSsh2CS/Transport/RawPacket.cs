@@ -1,3 +1,6 @@
+using System.Buffers;
+using System.Security.Cryptography;
+
 namespace LibSsh2CS.Transport;
 
 /// <summary>
@@ -11,16 +14,22 @@ namespace LibSsh2CS.Transport;
 /// Minimal carrier with no queueing logic or type filtering.
 /// <see cref="PacketQueue"/> handles inline DISCONNECT / IGNORE / DEBUG / EXT_INFO packets.
 /// </remarks>
-internal readonly struct RawPacket
+internal readonly struct RawPacket : IDisposable
 {
     /// <summary>The <c>SSH_MSG_*</c> type byte (<see cref="PacketType"/>).</summary>
     public int Type { get; }
 
     /// <summary>
-    /// The full decrypted payload, beginning with the type byte. A copy owned
-    /// by the caller (the reader does not retain a reference into the pipe).
+    /// The full decrypted payload, beginning with the type byte. Owned by the caller until disposed or transferred to another owner.
+    /// Only the payload length is exposed, never pooled capacity.
     /// </summary>
-    public byte[] Payload { get; }
+    public ReadOnlyMemory<byte> Payload { get; }
+
+    internal PayloadLease? Lease { get; }
+
+    public bool HasPacket { get; }
+
+    public void Dispose() => Lease?.Dispose();
 
     /// <summary>
     /// The inbound sequence number this packet carried (pre-NEWKEYS-reset if
@@ -28,10 +37,28 @@ internal readonly struct RawPacket
     /// </summary>
     public uint Seqno { get; }
 
-    public RawPacket(int type, byte[] payload, uint seqno)
+    public RawPacket(int type, ReadOnlyMemory<byte> payload, uint seqno, PayloadLease? lease = null)
     {
+        HasPacket = true;
+        Lease = lease;
         Type = type;
         Payload = payload;
         Seqno = seqno;
+    }
+}
+
+/// <summary>Shared return guard for copies of a packet; not reference counted.</summary>
+internal sealed class PayloadLease(ArrayPool<byte> pool, byte[] buffer, int length) : IDisposable
+{
+    private byte[]? _buffer = buffer;
+
+    public void Dispose()
+    {
+        byte[]? array = Interlocked.Exchange(ref _buffer, null);
+        if (array is not null)
+        {
+            CryptographicOperations.ZeroMemory(array.AsSpan(0, length));
+            pool.Return(array);
+        }
     }
 }

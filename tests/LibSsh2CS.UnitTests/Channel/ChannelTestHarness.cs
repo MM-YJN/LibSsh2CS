@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.IO.Pipelines;
 
@@ -27,10 +28,10 @@ internal sealed class ChannelTestHarness : IDisposable
     private readonly Pipe _s2c = new();
 
     /// <summary>Constructs the harness with a fresh router over the client pipes.</summary>
-    public ChannelTestHarness()
+    public ChannelTestHarness(ArrayPool<byte>? payloadPool = null)
     {
         ClientWriter = new PacketWriter(_c2s.Writer);
-        var queue = new PacketQueue(new PacketReader(_s2c.Reader));
+        var queue = new PacketQueue(new PacketReader(_s2c.Reader, payloadPool));
         Router = new ChannelRouter(queue, ClientWriter);
         ServerReader = new PacketReader(_c2s.Reader);
     }
@@ -71,6 +72,7 @@ internal sealed class ChannelTestHarness : IDisposable
     /// </summary>
     public void Dispose()
     {
+        Router.Dispose();
         try
         {
             _c2s.Writer.Complete();

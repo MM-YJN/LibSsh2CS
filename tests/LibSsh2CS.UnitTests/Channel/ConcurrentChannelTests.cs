@@ -106,11 +106,11 @@ public class ConcurrentChannelTests
         var seen = new Dictionary<uint, byte[]>();
         for (int i = 0; i < 2; i++)
         {
-            RawPacket pkt = await h.ServerReader.ReadPacketAsync(cancellationToken);
+            using RawPacket pkt = await h.ServerReader.ReadPacketAsync(cancellationToken);
             Assert.Equal(PacketType.ChannelData, pkt.Type);
-            uint recipient = BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.AsSpan(1, 4));
-            uint dataLen = BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.AsSpan(5, 4));
-            byte[] data = pkt.Payload.AsSpan(9, (int)dataLen).ToArray();
+            uint recipient = BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.Span.Slice(1, 4));
+            uint dataLen = BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.Span.Slice(5, 4));
+            byte[] data = pkt.Payload.Span.Slice(9, (int)dataLen).ToArray();
             seen[recipient] = data;
         }
 
@@ -158,9 +158,9 @@ public class ConcurrentChannelTests
         Assert.True(writeB.IsCompleted, "B's write should have completed despite A's blocked read");
 
         // Server reads B's DATA packet — proves the write reached the wire.
-        RawPacket dataPkt = await h.ServerReader.ReadPacketAsync(cancellationToken);
+        using RawPacket dataPkt = await h.ServerReader.ReadPacketAsync(cancellationToken);
         Assert.Equal(PacketType.ChannelData, dataPkt.Type);
-        Assert.Equal(200u, BinaryPrimitives.ReadUInt32BigEndian(dataPkt.Payload.AsSpan(1, 4)));
+        Assert.Equal(200u, BinaryPrimitives.ReadUInt32BigEndian(dataPkt.Payload.Span.Slice(1, 4)));
 
         // Now unblock A's read by feeding its data.
         await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(
@@ -194,8 +194,8 @@ public class ConcurrentChannelTests
         var execB = Task.Run(() => chB.ExecAsync("pwd", cancellationToken), cancellationToken);
 
         // Server reads both CHANNEL_REQUEST "exec" packets.
-        RawPacket reqA = await h.ServerReader.ReadPacketAsync(cancellationToken);
-        RawPacket reqB = await h.ServerReader.ReadPacketAsync(cancellationToken);
+        using RawPacket reqA = await h.ServerReader.ReadPacketAsync(cancellationToken);
+        using RawPacket reqB = await h.ServerReader.ReadPacketAsync(cancellationToken);
         Assert.Equal(PacketType.ChannelRequest, reqA.Type);
         Assert.Equal(PacketType.ChannelRequest, reqB.Type);
 
@@ -237,13 +237,13 @@ public class ConcurrentChannelTests
         var disposeB = Task.Run(() => chB.DisposeAsync().AsTask(), cancellationToken);
 
         // Server reads EOF + CLOSE for B.
-        RawPacket eof = await h.ServerReader.ReadPacketAsync(cancellationToken);
+        using RawPacket eof = await h.ServerReader.ReadPacketAsync(cancellationToken);
         Assert.Equal(PacketType.ChannelEof, eof.Type);
-        Assert.Equal(200u, BinaryPrimitives.ReadUInt32BigEndian(eof.Payload.AsSpan(1, 4)));
+        Assert.Equal(200u, BinaryPrimitives.ReadUInt32BigEndian(eof.Payload.Span.Slice(1, 4)));
 
-        RawPacket close = await h.ServerReader.ReadPacketAsync(cancellationToken);
+        using RawPacket close = await h.ServerReader.ReadPacketAsync(cancellationToken);
         Assert.Equal(PacketType.ChannelClose, close.Type);
-        Assert.Equal(200u, BinaryPrimitives.ReadUInt32BigEndian(close.Payload.AsSpan(1, 4)));
+        Assert.Equal(200u, BinaryPrimitives.ReadUInt32BigEndian(close.Payload.Span.Slice(1, 4)));
 
         // Server replies with its CLOSE; B's dispose completes.
         await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(
@@ -388,11 +388,11 @@ public class ConcurrentChannelTests
         var seen = new Dictionary<uint, byte[]>();
         for (int i = 0; i < 8; i++)
         {
-            RawPacket pkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+            using RawPacket pkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
             Assert.Equal(PacketType.ChannelData, pkt.Type);
-            uint recipient = BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.AsSpan(1, 4));
-            uint dataLen = BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.AsSpan(5, 4));
-            seen[recipient] = pkt.Payload.AsSpan(9, (int)dataLen).ToArray();
+            uint recipient = BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.Span.Slice(1, 4));
+            uint dataLen = BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.Span.Slice(5, 4));
+            seen[recipient] = pkt.Payload.Span.Slice(9, (int)dataLen).ToArray();
         }
 
         for (uint i = 0; i < 8; i++)
@@ -601,9 +601,9 @@ public class ConcurrentChannelTests
         Assert.True(writeTask.IsCompleted, "Write should complete after WINDOW_ADJUST.");
 
         // Server reads the client's DATA.
-        RawPacket dataPkt = await h.ServerReader.ReadPacketAsync(cancellationToken);
+        using RawPacket dataPkt = await h.ServerReader.ReadPacketAsync(cancellationToken);
         Assert.Equal(PacketType.ChannelData, dataPkt.Type);
-        Assert.Equal(data, dataPkt.Payload.AsSpan(9, data.Length).ToArray());
+        Assert.Equal(data, dataPkt.Payload.Span.Slice(9, data.Length).ToArray());
 
         // Now feed DATA for the read. The read's TCS is still registered; it
         // gets woken; the read completes.
@@ -704,16 +704,16 @@ public class ConcurrentChannelTests
         Task<SshChannel> openB = Task.Run(() => SshChannel.OpenAsync(h.ClientWriter, h.Router, TestContext.Current.CancellationToken));
 
         // Server reads both CHANNEL_OPEN packets.
-        RawPacket openPktA = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
-        RawPacket openPktB = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket openPktA = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket openPktB = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelOpen, openPktA.Type);
         Assert.Equal(PacketType.ChannelOpen, openPktB.Type);
 
         // The two local ids are 0 and 1 (sequential allocation under the
         // pump-lock? — actually AllocateLocalId is not pump-locked, but it's
         // atomic via uint increment; the test just verifies both are distinct).
-        uint localA = BinaryPrimitives.ReadUInt32BigEndian(openPktA.Payload.AsSpan(12, 4));
-        uint localB = BinaryPrimitives.ReadUInt32BigEndian(openPktB.Payload.AsSpan(12, 4));
+        uint localA = BinaryPrimitives.ReadUInt32BigEndian(openPktA.Payload.Span.Slice(12, 4));
+        uint localB = BinaryPrimitives.ReadUInt32BigEndian(openPktB.Payload.Span.Slice(12, 4));
         Assert.NotEqual(localA, localB);
 
         // Reply with CONFIRMATIONs addressed to each by its local id. The

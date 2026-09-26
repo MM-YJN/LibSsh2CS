@@ -25,12 +25,12 @@ public class SshChannelWriteTests
         byte[] data = [1, 2, 3, 4];
         Task writeTask = ch.WriteAsync(data, TestContext.Current.CancellationToken);
 
-        RawPacket pkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket pkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelData, pkt.Type);
         // [94][u32 remoteId=5][u32 len=4][1,2,3,4]
-        Assert.Equal(5u, BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.AsSpan(1, 4)));
-        Assert.Equal(4u, BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.AsSpan(5, 4)));
-        Assert.Equal(data, pkt.Payload.AsSpan(9, 4).ToArray());
+        Assert.Equal(5u, BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.Span.Slice(1, 4)));
+        Assert.Equal(4u, BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.Span.Slice(5, 4)));
+        Assert.Equal(data, pkt.Payload.Span.Slice(9, 4).ToArray());
 
         await writeTask;
         Assert.Equal(1_000_000u - 4u, ch.OutboundWindow);   // decremented
@@ -49,20 +49,20 @@ public class SshChannelWriteTests
         byte[] data = [10, 20, 30, 40, 50, 60, 70];   // 7 bytes → 4 + 3
         Task writeTask = ch.WriteAsync(data, TestContext.Current.CancellationToken);
 
-        RawPacket p1 = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
-        RawPacket p2 = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket p1 = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket p2 = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         await writeTask;
 
         Assert.Equal(PacketType.ChannelData, p1.Type);
         Assert.Equal(PacketType.ChannelData, p2.Type);
 
         // First packet: 4 bytes (the max-packet cap).
-        Assert.Equal(4u, BinaryPrimitives.ReadUInt32BigEndian(p1.Payload.AsSpan(5, 4)));
-        Assert.Equal([10, 20, 30, 40], p1.Payload.AsSpan(9, 4).ToArray());
+        Assert.Equal(4u, BinaryPrimitives.ReadUInt32BigEndian(p1.Payload.Span.Slice(5, 4)));
+        Assert.Equal([10, 20, 30, 40], p1.Payload.Span.Slice(9, 4).ToArray());
 
         // Second packet: the remaining 3 bytes.
-        Assert.Equal(3u, BinaryPrimitives.ReadUInt32BigEndian(p2.Payload.AsSpan(5, 4)));
-        Assert.Equal([50, 60, 70], p2.Payload.AsSpan(9, 3).ToArray());
+        Assert.Equal(3u, BinaryPrimitives.ReadUInt32BigEndian(p2.Payload.Span.Slice(5, 4)));
+        Assert.Equal([50, 60, 70], p2.Payload.Span.Slice(9, 3).ToArray());
     }
 
     [Fact]
@@ -76,9 +76,9 @@ public class SshChannelWriteTests
         byte[] data = [1, 2, 3, 4, 5];   // 5 bytes; window is 3 → first chunk = 3
         Task writeTask = ch.WriteAsync(data, TestContext.Current.CancellationToken);
 
-        RawPacket p1 = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
-        Assert.Equal(3u, BinaryPrimitives.ReadUInt32BigEndian(p1.Payload.AsSpan(5, 4)));
-        Assert.Equal([1, 2, 3], p1.Payload.AsSpan(9, 3).ToArray());
+        using RawPacket p1 = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(3u, BinaryPrimitives.ReadUInt32BigEndian(p1.Payload.Span.Slice(5, 4)));
+        Assert.Equal([1, 2, 3], p1.Payload.Span.Slice(9, 3).ToArray());
         Assert.Equal(0u, ch.OutboundWindow);   // window exhausted by the first chunk
 
         // The write now blocks (window=0). Feed a WINDOW_ADJUST to refill.
@@ -86,10 +86,10 @@ public class SshChannelWriteTests
             ChannelTestHarness.BuildWindowAdjustPayload(0, bytesToAdd: 10)));
         h.CompleteInbound();
 
-        RawPacket p2 = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket p2 = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         await writeTask;
-        Assert.Equal(2u, BinaryPrimitives.ReadUInt32BigEndian(p2.Payload.AsSpan(5, 4)));
-        Assert.Equal([4, 5], p2.Payload.AsSpan(9, 2).ToArray());
+        Assert.Equal(2u, BinaryPrimitives.ReadUInt32BigEndian(p2.Payload.Span.Slice(5, 4)));
+        Assert.Equal([4, 5], p2.Payload.Span.Slice(9, 2).ToArray());
     }
 
     // ── WriteChunkCap (32700) ──────────────────────────────────────────────
@@ -111,14 +111,14 @@ public class SshChannelWriteTests
 
         Task writeTask = ch.WriteAsync(data, TestContext.Current.CancellationToken);
 
-        RawPacket p1 = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
-        RawPacket p2 = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket p1 = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket p2 = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         await writeTask;
 
         Assert.Equal(ChannelConstants.WriteChunkCap,
-            (int)BinaryPrimitives.ReadUInt32BigEndian(p1.Payload.AsSpan(5, 4)));
+            (int)BinaryPrimitives.ReadUInt32BigEndian(p1.Payload.Span.Slice(5, 4)));
         Assert.Equal(40000 - ChannelConstants.WriteChunkCap,
-            (int)BinaryPrimitives.ReadUInt32BigEndian(p2.Payload.AsSpan(5, 4)));
+            (int)BinaryPrimitives.ReadUInt32BigEndian(p2.Payload.Span.Slice(5, 4)));
     }
 
     // ── Block on zero window ───────────────────────────────────────────────
@@ -144,10 +144,10 @@ public class SshChannelWriteTests
             ChannelTestHarness.BuildWindowAdjustPayload(0, bytesToAdd: 100)));
         h.CompleteInbound();
 
-        RawPacket pkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket pkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         await writeTask;
         Assert.Equal(PacketType.ChannelData, pkt.Type);
-        Assert.Equal([0xAB], pkt.Payload.AsSpan(9, 1).ToArray());
+        Assert.Equal([0xAB], pkt.Payload.Span.Slice(9, 1).ToArray());
         Assert.Equal(100u - 1u, ch.OutboundWindow);   // 100 adjusted, 1 written
     }
 
@@ -173,10 +173,10 @@ public class SshChannelWriteTests
                 ChannelTestHarness.BuildWindowAdjustPayload(0, bytesToAdd: 50)));
         h.CompleteInbound();
 
-        RawPacket pkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket pkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         await writeTask;
         Assert.Equal(PacketType.ChannelData, pkt.Type);
-        Assert.Equal([0x99], pkt.Payload.AsSpan(9, 1).ToArray());
+        Assert.Equal([0x99], pkt.Payload.Span.Slice(9, 1).ToArray());
 
         // chOther received its DATA via the route during the write's pump loop.
         Assert.Equal([0x12, 0x34], chOther.TryDequeueStdout());
@@ -193,7 +193,7 @@ public class SshChannelWriteTests
             outboundWindow: 1000, outboundMaxPacket: 32_000);
 
         Task writeTask = ch.WriteAsync(new byte[300], TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await writeTask;
 
         Assert.Equal(700u, ch.OutboundWindow);

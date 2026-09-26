@@ -42,7 +42,7 @@ public class WaitForReplyRestashTests
                 PacketType.ChannelSuccess, BuildReplyPayload(PacketType.ChannelSuccess, 0)));
         h.CompleteInbound();
 
-        RawPacket got = await h.Router.WaitForReplyAsync(
+        using RawPacket got = await h.Router.WaitForReplyAsync(
             ch,
             [PacketType.ChannelSuccess, PacketType.ChannelFailure],
             TestContext.Current.CancellationToken)
@@ -69,7 +69,7 @@ public class WaitForReplyRestashTests
                 PacketType.ChannelFailure, BuildReplyPayload(PacketType.ChannelFailure, 0)));
         h.CompleteInbound();
 
-        RawPacket got = await h.Router.WaitForReplyAsync(
+        using RawPacket got = await h.Router.WaitForReplyAsync(
             ch,
             [PacketType.ChannelSuccess, PacketType.ChannelFailure],
             TestContext.Current.CancellationToken)

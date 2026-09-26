@@ -26,10 +26,10 @@ public class SshChannelEofCloseTests
 
         await ch.SendEofAsync(TestContext.Current.CancellationToken);
 
-        RawPacket pkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket pkt = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelEof, pkt.Type);
-        Assert.Equal((byte)PacketType.ChannelEof, pkt.Payload[0]);
-        Assert.Equal(5u, BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.AsSpan(1, 4)));
+        Assert.Equal((byte)PacketType.ChannelEof, pkt.Payload.Span[0]);
+        Assert.Equal(5u, BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.Span.Slice(1, 4)));
         Assert.True(ch.LocalEof);
     }
 
@@ -41,7 +41,7 @@ public class SshChannelEofCloseTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         await ch.SendEofAsync(TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
 
         // Second call should not send anything on the wire.
         await ch.SendEofAsync(TestContext.Current.CancellationToken);
@@ -57,7 +57,7 @@ public class SshChannelEofCloseTests
         using var h = new ChannelTestHarness();
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
         await ch.SendEofAsync(TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
 
         SshException ex = await Assert.ThrowsAsync<SshException>(async () =>
             await ch.WriteAsync(new byte[] { 1 }, TestContext.Current.CancellationToken));
@@ -243,13 +243,13 @@ public class SshChannelEofCloseTests
 
         await ch.DisposeAsync();
 
-        RawPacket eof = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket eof = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelEof, eof.Type);
-        Assert.Equal(7u, BinaryPrimitives.ReadUInt32BigEndian(eof.Payload.AsSpan(1, 4)));
+        Assert.Equal(7u, BinaryPrimitives.ReadUInt32BigEndian(eof.Payload.Span.Slice(1, 4)));
 
-        RawPacket close = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket close = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelClose, close.Type);
-        Assert.Equal(7u, BinaryPrimitives.ReadUInt32BigEndian(close.Payload.AsSpan(1, 4)));
+        Assert.Equal(7u, BinaryPrimitives.ReadUInt32BigEndian(close.Payload.Span.Slice(1, 4)));
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────

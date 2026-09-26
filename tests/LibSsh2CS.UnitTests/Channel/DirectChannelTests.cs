@@ -60,11 +60,11 @@ public class DirectChannelTests
             originatorAddress: "10.0.0.1", originatorPort: 50000,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        RawPacket open = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket open = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelOpen, open.Type);
-        Assert.Equal("direct-tcpip", ReadString(open.Payload, 1).value);
+        Assert.Equal("direct-tcpip", ReadString(open.Payload.ToArray(), 1).value);
 
-        byte[] extra = ExtractExtra(open.Payload, "direct-tcpip");
+        byte[] extra = ExtractExtra(open.Payload.ToArray(), "direct-tcpip");
         int o = 0;
         (string? host, int o2) = ReadString(extra, o);
         o = o2;
@@ -104,9 +104,9 @@ public class DirectChannelTests
             originatorAddress: "127.0.0.1", originatorPort: 0,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        RawPacket open = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket open = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
 
-        byte[] extra = ExtractExtra(open.Payload, "direct-tcpip");
+        byte[] extra = ExtractExtra(open.Payload.ToArray(), "direct-tcpip");
         int o = 0;
         (string _, int o1) = ReadString(extra, o);
         o = o1;
@@ -142,11 +142,11 @@ public class DirectChannelTests
             originatorAddress: "127.0.0.1", originatorPort: 0,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        RawPacket open = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket open = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelOpen, open.Type);
-        Assert.Equal("direct-streamlocal@openssh.com", ReadString(open.Payload, 1).value);
+        Assert.Equal("direct-streamlocal@openssh.com", ReadString(open.Payload.ToArray(), 1).value);
 
-        byte[] extra = ExtractExtra(open.Payload, "direct-streamlocal@openssh.com");
+        byte[] extra = ExtractExtra(open.Payload.ToArray(), "direct-streamlocal@openssh.com");
         int o = 0;
         (string? path, int o1) = ReadString(extra, o);
         o = o1;
@@ -173,7 +173,7 @@ public class DirectChannelTests
             cancellationToken: TestContext.Current.CancellationToken);
 
         // Consume the CHANNEL_OPEN.
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
 
         // Server refuses — connect-failed is the typical reason for direct-tcpip.
         byte[] failPayload = BuildOpenFailurePayload(
@@ -201,17 +201,17 @@ public class DirectChannelTests
             h.ClientWriter, h.Router,
             host: "a", port: 1, originatorAddress: "127.0.0.1", originatorPort: 0,
             cancellationToken: TestContext.Current.CancellationToken);
-        RawPacket first = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket first = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         // "direct-tcpip" (12 chars) → localId offset = 1 + 4 + 12 = 17.
         const int DirectTcpipLocalIdOffset = 17;
-        uint firstId = BinaryPrimitives.ReadUInt32BigEndian(first.Payload.AsSpan(DirectTcpipLocalIdOffset, 4));
+        uint firstId = BinaryPrimitives.ReadUInt32BigEndian(first.Payload.Span.Slice(DirectTcpipLocalIdOffset, 4));
 
         _ = SshChannel.OpenDirectTcpIpAsync(
             h.ClientWriter, h.Router,
             host: "b", port: 2, originatorAddress: "127.0.0.1", originatorPort: 0,
             cancellationToken: TestContext.Current.CancellationToken);
-        RawPacket second = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
-        uint secondId = BinaryPrimitives.ReadUInt32BigEndian(second.Payload.AsSpan(DirectTcpipLocalIdOffset, 4));
+        using RawPacket second = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        uint secondId = BinaryPrimitives.ReadUInt32BigEndian(second.Payload.Span.Slice(DirectTcpipLocalIdOffset, 4));
 
         Assert.Equal(0u, firstId);
         Assert.Equal(1u, secondId);

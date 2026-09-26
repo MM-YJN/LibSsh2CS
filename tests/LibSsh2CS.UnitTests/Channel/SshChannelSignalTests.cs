@@ -25,17 +25,17 @@ public class SshChannelSignalTests
 
         Task t = ch.SignalAsync("TERM", TestContext.Current.CancellationToken);
 
-        RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelRequest, req.Type);
 
-        Assert.Equal((byte)PacketType.ChannelRequest, req.Payload[0]);
-        Assert.Equal(7u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(1, 4)));
-        Assert.Equal("signal", ReadStringAt(req.Payload, 5));
+        Assert.Equal((byte)PacketType.ChannelRequest, req.Payload.Span[0]);
+        Assert.Equal(7u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(1, 4)));
+        Assert.Equal("signal", ReadStringAt(req.Payload.ToArray(), 5));
 
         // After [string "signal"]: offset 5 + 4 (strlen) + 6 ("signal") = 15 → want_reply.
-        Assert.Equal(0, req.Payload[15]);   // want_reply = FALSE
+        Assert.Equal(0, req.Payload.Span[15]);   // want_reply = FALSE
 
-        Assert.Equal("TERM", ReadStringAt(req.Payload, 16));
+        Assert.Equal("TERM", ReadStringAt(req.Payload.ToArray(), 16));
 
         // Fire-and-forget: must complete without any inbound packet.
         h.CompleteInbound();
@@ -52,10 +52,10 @@ public class SshChannelSignalTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 2);
 
         Task t = ch.SignalAsync(SshSignal.Kill, TestContext.Current.CancellationToken);
-        RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
 
         // Skip type(1) + recip(4) + strlen(4) + "signal"(6) + want_reply(1) = 16.
-        Assert.Equal("KILL", ReadStringAt(req.Payload, 16));
+        Assert.Equal("KILL", ReadStringAt(req.Payload.ToArray(), 16));
 
         h.CompleteInbound();
         await t;
@@ -82,7 +82,7 @@ public class SshChannelSignalTests
         await ch.SignalAsync("HUP", cts.Token);
 
         // The outbound packet still went out.
-        RawPacket req = await h.ServerReader.ReadPacketAsync(cancellationToken);
+        using RawPacket req = await h.ServerReader.ReadPacketAsync(cancellationToken);
         Assert.Equal(PacketType.ChannelRequest, req.Type);
     }
 
@@ -106,10 +106,10 @@ public class SshChannelSignalTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task t = ch.SignalAsync(string.Empty, TestContext.Current.CancellationToken);
-        RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
 
         // Empty string still encodes a 4-byte length prefix of 0.
-        Assert.Equal(0u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(16, 4)));
+        Assert.Equal(0u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(16, 4)));
         Assert.Equal(20, req.Payload.Length);   // type(1)+recip(4)+strlen(4)+"signal"(6)+reply(1)+strlen(4)
 
         h.CompleteInbound();
@@ -129,8 +129,8 @@ public class SshChannelSignalTests
         // Drive the close handshake to completion: client sends EOF+CLOSE,
         // server replies with CLOSE.
         Task closeTask = ch.DisposeAsync().AsTask();
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // EOF
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // CLOSE
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // EOF
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // CLOSE
         await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(PacketType.ChannelClose,
             ChannelTestHarness.BuildClosePayload(0)));
         h.CompleteInbound();
@@ -154,7 +154,7 @@ public class SshChannelSignalTests
 
         // Send signal on A — completes immediately (fire-and-forget).
         await chA.SignalAsync("TERM", TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
 
         // Feed a DATA packet for B (recipient = client's local id for B = 1)
         // and pump the router — B's read should see it.

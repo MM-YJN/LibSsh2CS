@@ -107,6 +107,8 @@ public sealed class SshSession : IAsyncDisposable
 
     private PacketWriter? _writer;
     private PacketQueue? _queue;
+    private readonly ArrayPool<byte>? _payloadPool;
+
     // CA2213 false positive: the dispose call `_channelRouter?.Dispose()`
     // in DisposeAsync is genuine, but the nullable annotation combined with
     // the listener-teardown block pushes the analyzer
@@ -151,9 +153,10 @@ public sealed class SshSession : IAsyncDisposable
     /// time-based threshold verification (production callers use the public
     /// zero-arg ctor which wires <see cref="TimeProvider.System"/>).
     /// </summary>
-    internal SshSession(TimeProvider timeProvider)
+    internal SshSession(TimeProvider timeProvider, ArrayPool<byte>? payloadPool = null)
     {
         _timeProvider = timeProvider;
+        _payloadPool = payloadPool;
         // NB: _lastKeepaliveTimestampTicks is intentionally NOT seeded here —
         // the never-sent state (_keepaliveEverSent == false) makes the first
         // SendKeepAliveAsync always fire, mirroring keepalive.c:71 where the
@@ -610,6 +613,9 @@ public sealed class SshSession : IAsyncDisposable
         }
         catch
         {
+            _channelRouter?.Dispose();
+            _queue?.Dispose();
+
             // Failure-path cleanup: dispose the fresh writer/queue/router
             // (they hold cipher/MAC/semaphore state) so nothing leaks and a
             // retry starts clean. PacketWriter/PacketReader dispose only their
@@ -653,7 +659,7 @@ public sealed class SshSession : IAsyncDisposable
         CancellationToken cancellationToken)
     {
         _writer = new PacketWriter(transport.Output);
-        _queue = new PacketQueue(new PacketReader(transport.Input))
+        _queue = new PacketQueue(new PacketReader(transport.Input, _payloadPool))
         {
             // Wire the IGNORE/DEBUG callbacks (may have been set before the
             // handshake; the property setters also push later assignments)
@@ -689,7 +695,7 @@ public sealed class SshSession : IAsyncDisposable
 
         RawPacket serverKexInitPkt = await _queue.WaitForTypeAsync(PacketType.KexInit, cancellationToken)
             .ConfigureAwait(false);
-        byte[] serverKexInit = serverKexInitPkt.Payload;
+        byte[] serverKexInit = serverKexInitPkt.Payload.ToArray();
 
         KexInit clientInit = KeyExchange.ParseKexInit(clientKexInit);
         KexInit serverInit = KeyExchange.ParseKexInit(serverKexInit);
@@ -860,7 +866,7 @@ public sealed class SshSession : IAsyncDisposable
 
             RawPacket serverKexInitPkt = await _queue.WaitForTypeAsync(PacketType.KexInit, cancellationToken)
                 .ConfigureAwait(false);
-            byte[] serverKexInit = serverKexInitPkt.Payload;
+            byte[] serverKexInit = serverKexInitPkt.Payload.ToArray();
 
             KexInit clientInit = KeyExchange.ParseKexInit(clientKexInit);
             KexInit serverInit = KeyExchange.ParseKexInit(serverKexInit);
@@ -1059,7 +1065,7 @@ public sealed class SshSession : IAsyncDisposable
         int boundPort = port;
         if (port == 0 && reply.Payload.Length >= 1 + 4)
         {
-            boundPort = (int)BinaryPrimitives.ReadUInt32BigEndian(reply.Payload.AsSpan(1, 4));
+            boundPort = (int)BinaryPrimitives.ReadUInt32BigEndian(reply.Payload.Span.Slice(1, 4));
         }
 
         var listener = new SshListener(this, host, boundPort, queueMaxSize);
@@ -1330,50 +1336,58 @@ public sealed class SshSession : IAsyncDisposable
             return;
         }
 
-        // Tear down any live listeners BEFORE the writer goes away
-        // (so each listener's cancel-tcpip-forward send has a chance). Swallow
-        // errors — teardown is best-effort.
-        if (_listeners is not null && !_listeners.IsEmpty)
+        try
         {
-            foreach (SshListener listener in _listeners.Values)
+            // Tear down any live listeners BEFORE the writer goes away
+            // (so each listener's cancel-tcpip-forward send has a chance). Swallow
+            // errors — teardown is best-effort.
+            if (_listeners is not null && !_listeners.IsEmpty)
+            {
+                foreach (SshListener listener in _listeners.Values)
+                {
+                    try
+                    {
+                        await listener.DisposeAsync().ConfigureAwait(false);
+                    }
+                    catch (SshException) { }
+                }
+            }
+
+            if (_handshakeCompleted && _writer is not null)
             {
                 try
                 {
-                    await listener.DisposeAsync().ConfigureAwait(false);
+                    // NB: _disposed is already true here, so this must go through
+                    // the unguarded core — the public DisconnectAsync would throw
+                    // ObjectDisposedException instantly and the DISCONNECT would
+                    // never be sent.
+                    await DisconnectCoreAsync(SshDisconnectReason.ByApplication, "session closed",
+                        lang: "", cancellationToken: CancellationToken.None).ConfigureAwait(false);
                 }
-                catch (SshException) { }
+                catch
+                {
+                    // Best-effort; ignore errors during teardown.
+                }
             }
-        }
 
-        if (_handshakeCompleted && _writer is not null)
-        {
-            try
+            if (_writer is not null)
             {
-                // NB: _disposed is already true here, so this must go through
-                // the unguarded core — the public DisconnectAsync would throw
-                // ObjectDisposedException instantly and the DISCONNECT would
-                // never be sent.
-                await DisconnectCoreAsync(SshDisconnectReason.ByApplication, "session closed",
-                    lang: "", cancellationToken: CancellationToken.None).ConfigureAwait(false);
+                await _writer.DisposeAsync().ConfigureAwait(false);
             }
-            catch
+
+            if (_queue is not null)
             {
-                // Best-effort; ignore errors during teardown.
+                await _queue.Reader.DisposeAsync().ConfigureAwait(false);
             }
-        }
 
-        if (_writer is not null)
+            // Dispose the cooperative-pumper lock owned by the router.
+            _channelRouter?.Dispose();
+        }
+        finally
         {
-            await _writer.DisposeAsync().ConfigureAwait(false);
+            _channelRouter?.Dispose();
+            _queue?.Dispose();
         }
-
-        if (_queue is not null)
-        {
-            await _queue.Reader.DisposeAsync().ConfigureAwait(false);
-        }
-
-        // Dispose the cooperative-pumper lock owned by the router.
-        _channelRouter?.Dispose();
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────

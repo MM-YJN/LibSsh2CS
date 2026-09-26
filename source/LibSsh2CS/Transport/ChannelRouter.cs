@@ -151,6 +151,8 @@ internal sealed class ChannelRouter : IDisposable
     /// <c>_libssh2_channel_nextid</c> (<c>channel.c:64-89</c>).
     /// </summary>
     private uint _nextLocalId;
+    private readonly object _registryLock = new();
+    private bool _disposed;
 
     // ── Cooperative pumper state ────────────────────────
     //
@@ -630,7 +632,15 @@ internal sealed class ChannelRouter : IDisposable
     public void Register(SshChannel channel)
     {
         ArgumentNullException.ThrowIfNull(channel);
-        _byLocalId[channel.LocalId] = channel;
+        lock (_registryLock)
+        {
+            if (_disposed)
+            {
+                channel.ReleaseInboundBuffers();
+                throw new ObjectDisposedException(nameof(ChannelRouter));
+            }
+            _byLocalId[channel.LocalId] = channel;
+        }
     }
 
     /// <summary>
@@ -650,7 +660,12 @@ internal sealed class ChannelRouter : IDisposable
     public void Unregister(SshChannel channel)
     {
         ArgumentNullException.ThrowIfNull(channel);
-        _byLocalId.Remove(channel.LocalId);
+        // Also covers half-open channels abandoned after failure or cancellation.
+        channel.ReleaseInboundBuffers();
+        lock (_registryLock)
+        {
+            _byLocalId.Remove(channel.LocalId);
+        }
 
         // Cooperative-pumper cleanup. If the channel has registered
         // waiters, cancel them all so any in-flight await wakes up cleanly.
@@ -671,9 +686,12 @@ internal sealed class ChannelRouter : IDisposable
     }
 
     /// <summary>Looks up a registered channel by its local id.</summary>
-    internal bool TryGet(uint localId, out SshChannel? channel)
+    internal bool TryGet(uint localId, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out SshChannel? channel)
     {
-        return _byLocalId.TryGetValue(localId, out channel);
+        lock (_registryLock)
+        {
+            return _byLocalId.TryGetValue(localId, out channel);
+        }
     }
 
     // ── Cooperative pumper entry points ─────────────────
@@ -1120,10 +1138,10 @@ internal sealed class ChannelRouter : IDisposable
             bool wantReply = false;
             if (pkt.Payload.Length >= 5)
             {
-                uint nameLen = BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.AsSpan(1, 4));
+                uint nameLen = BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.Span.Slice(1, 4));
                 if (nameLen <= pkt.Payload.Length - 6)
                 {
-                    wantReply = pkt.Payload[5 + (int)nameLen] != 0;
+                    wantReply = pkt.Payload.Span[5 + (int)nameLen] != 0;
                 }
             }
 
@@ -1191,7 +1209,7 @@ internal sealed class ChannelRouter : IDisposable
         {
             RawPacket pkt = await _queue.TryTakeAvailableAsync(cancellationToken)
                 .ConfigureAwait(false);
-            if (pkt.Payload is null)
+            if (!pkt.HasPacket)
             {
                 return;
             }
@@ -1261,7 +1279,7 @@ internal sealed class ChannelRouter : IDisposable
             return 0;
         }
 
-        return BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.AsSpan(1, 4));
+        return BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.Span.Slice(1, 4));
     }
 
     // ── The pump (legacy entry points — now pump-lock-guarded) ──
@@ -1507,103 +1525,64 @@ internal sealed class ChannelRouter : IDisposable
     /// </remarks>
     private async Task RouteAsync(RawPacket pkt, CancellationToken cancellationToken)
     {
-        // The recipient channel id is the 4 bytes after the 1-byte type.
-        // All SSH_MSG_CHANNEL_* messages carry it at offset 1 (RFC 4254 §5).
-        if (pkt.Payload.Length < 5)
+        bool adopted = false;
+        try
         {
-            return;
-        }
+            // The recipient channel id is the 4 bytes after the 1-byte type.
+            // All SSH_MSG_CHANNEL_* messages carry it at offset 1 (RFC 4254 §5).
+            if (pkt.Payload.Length < 5)
+            {
+                return;
+            }
 
-        uint recipientId = ReadUInt32At(pkt.Payload, 1);
-        if (!_byLocalId.TryGetValue(recipientId, out SshChannel? channel))
+            uint recipientId = ReadUInt32At(pkt.Payload, 1);
+            if (!TryGet(recipientId, out SshChannel? channel))
+            {
+                // packet.c:973-978 / 1094-1096 / 1221-1226 / 1314: unknown channel — drop.
+                return;
+            }
+
+            switch (pkt.Type)
+            {
+                case PacketType.ChannelData:
+                    adopted = channel.DeliverDataPayload(pkt.Payload, isExtended: false, pkt.Lease);
+                    break;
+                case PacketType.ChannelExtendedData:
+                    adopted = channel.TryDeliverDataPayload(pkt.Payload, isExtended: true, pkt.Lease, out uint refund);
+                    if (refund > 0)
+                    {
+                        await channel.RefundInboundWindowAsync(refund, cancellationToken).ConfigureAwait(false);
+                    }
+                    break;
+                case PacketType.ChannelWindowAdjust:
+                    DeliverWindowAdjust(channel, pkt.Payload);
+                    break;
+                case PacketType.ChannelEof:
+                    channel.DeliverEof();
+                    break;
+                case PacketType.ChannelClose:
+                    channel.DeliverClose();
+                    break;
+                case PacketType.ChannelRequest:
+                    await DeliverRequestAsync(channel, pkt.Payload, cancellationToken).ConfigureAwait(false);
+                    break;
+                default:
+                    // Should not reach here (combined set only includes 93-98 + reply
+                    // types, and reply types are returned above). Defensive no-op.
+                    break;
+            }
+
+            // Signal any task awaiting this channel's state. No-op if no
+            // waiter is registered in _signals (legacy single-channel path).
+            SignalChannel(recipientId);
+        }
+        finally
         {
-            // packet.c:973-978 / 1094-1096 / 1221-1226 / 1314: unknown channel — drop.
-            return;
+            if (!adopted)
+            {
+                pkt.Dispose();
+            }
         }
-
-        switch (pkt.Type)
-        {
-            case PacketType.ChannelData:
-                channel.DeliverDataPayload(pkt.Payload, isExtended: false);
-                break;
-            case PacketType.ChannelExtendedData:
-                await DeliverExtendedDataPayloadAsync(channel, pkt.Payload, cancellationToken)
-                    .ConfigureAwait(false);
-                break;
-            case PacketType.ChannelWindowAdjust:
-                DeliverWindowAdjust(channel, pkt.Payload);
-                break;
-            case PacketType.ChannelEof:
-                channel.DeliverEof();
-                break;
-            case PacketType.ChannelClose:
-                channel.DeliverClose();
-                break;
-            case PacketType.ChannelRequest:
-                await DeliverRequestAsync(channel, pkt.Payload, cancellationToken).ConfigureAwait(false);
-                break;
-            default:
-                // Should not reach here (combined set only includes 93-98 + reply
-                // types, and reply types are returned above). Defensive no-op.
-                break;
-        }
-
-        // Signal any task awaiting this channel's state. No-op if no
-        // waiter is registered in _signals (legacy single-channel path).
-        SignalChannel(recipientId);
-    }
-
-    /// <summary>
-    /// Routes a <c>SSH_MSG_CHANNEL_EXTENDED_DATA</c> (stderr) packet. Applies
-    /// the same packet-size/window truncation as
-    /// <see cref="SshChannel.DeliverDataPayload"/>, then either:
-    /// <list type="bullet">
-    /// <item>Buffers the data via
-    /// <see cref="SshChannel.DeliverDataPayload(byte[], bool)"/> when the
-    /// channel's <see cref="SshChannel.ExtendedDataMode"/> is
-    /// <see cref="SshExtendedDataMode.Normal"/> or <see cref="SshExtendedDataMode.Merge"/>
-    /// (parity <c>packet.c:1060-1082</c>); OR</item>
-    /// <item>Drops the data and immediately refunds the freed window bytes via
-    /// <c>SSH_MSG_CHANNEL_WINDOW_ADJUST</c> when the mode is
-    /// <see cref="SshExtendedDataMode.Ignore"/> (parity <c>packet.c:994-1030</c>).</item>
-    /// </list>
-    /// </summary>
-    /// <remarks>
-    /// The truncation arithmetic itself lives on
-    /// <see cref="SshChannel"/> under its window lock (atomic with the
-    /// read-avail bump / the refund computation), so the router no longer
-    /// reads the window counters unlocked.
-    /// </remarks>
-    private static ValueTask DeliverExtendedDataPayloadAsync(
-        SshChannel channel, byte[] payload, CancellationToken cancellationToken)
-    {
-        if (channel.ExtendedDataMode != SshExtendedDataMode.Ignore)
-        {
-            // Normal/Merge (the majority): same truncation + buffering
-            // invariants as stdout, applied atomically inside the channel.
-            channel.DeliverDataPayload(payload, isExtended: true);
-            return ValueTask.CompletedTask;
-        }
-
-        // IGNORE mode — packet.c:994-1030. The channel computes the same
-        // (window-truncated) refund amount atomically; the data is never
-        // buffered, so read_avail is untouched and the truncated length is
-        // refunded in full.
-        uint refund = channel.ComputeIgnoreRefundAmount(payload);
-        if (refund > 0)
-        {
-            // packet.c:1008 + 1022-1025 + channel.c:1925 — refund the freed window
-            // to the peer via WINDOW_ADJUST (force=1, bypasses MINADJUST queue).
-            return new ValueTask(DeliverExtendedDataRefundAsync(channel, refund, cancellationToken));
-        }
-
-        return ValueTask.CompletedTask;
-    }
-
-    /// <summary>Slow path of <see cref="DeliverExtendedDataPayloadAsync"/>: refunds ignored data (network IO).</summary>
-    private static async Task DeliverExtendedDataRefundAsync(SshChannel channel, uint refund, CancellationToken cancellationToken)
-    {
-        await channel.RefundInboundWindowAsync(refund, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1611,7 +1590,7 @@ internal sealed class ChannelRouter : IDisposable
     /// (<c>[93][u32 recipient][u32 bytestoadd]</c>) and applies it to the
     /// channel's outbound window (parity <c>packet.c:1306-1325</c>).
     /// </summary>
-    private static void DeliverWindowAdjust(SshChannel channel, byte[] payload)
+    private static void DeliverWindowAdjust(SshChannel channel, ReadOnlyMemory<byte> payload)
     {
         if (payload.Length < 9)
         {
@@ -1629,7 +1608,7 @@ internal sealed class ChannelRouter : IDisposable
     /// <c>want_reply=TRUE</c> (parity <c>packet.c:1117-1209</c>).
     /// </summary>
     private async Task DeliverRequestAsync(
-        SshChannel channel, byte[] payload, CancellationToken cancellationToken)
+        SshChannel channel, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
     {
         // [98][u32 recipient][string request_type][bool want_reply][type-specific...]
         var r = new PacketWireReader(new ReadOnlySequence<byte>(payload));
@@ -1687,9 +1666,9 @@ internal sealed class ChannelRouter : IDisposable
     // ── Helpers ────────────────────────────────────────────────────────────
 
     /// <summary>Reads a big-endian uint32 from <paramref name="buf"/> at <paramref name="offset"/>.</summary>
-    private static uint ReadUInt32At(byte[] buf, int offset)
+    private static uint ReadUInt32At(ReadOnlyMemory<byte> buf, int offset)
     {
-        return BinaryPrimitives.ReadUInt32BigEndian(buf.AsSpan(offset, 4));
+        return BinaryPrimitives.ReadUInt32BigEndian(buf.Span.Slice(offset, 4));
     }
 
     /// <summary>
@@ -1737,6 +1716,22 @@ internal sealed class ChannelRouter : IDisposable
     /// </remarks>
     public void Dispose()
     {
+        SshChannel[] channels;
+        lock (_registryLock)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+            _disposed = true;
+            channels = _byLocalId.Values.ToArray();
+            _byLocalId.Clear();
+        }
+        foreach (SshChannel channel in channels)
+        {
+            channel.ReleaseInboundBuffers();
+        }
+        _queue.Dispose();
         // Cancel every registered waiter so in-flight awaits throw a clean
         // OCE rather than an ObjectDisposedException on the disposed semaphore.
         foreach (KeyValuePair<uint, List<TaskCompletionSource<bool>>> entry in _signals)

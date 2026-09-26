@@ -182,6 +182,7 @@ public class RekeyAutoTriggerTests
             RouterHarness.BuildCleartext(PacketType.ChannelSuccess, RouterHarness.BuildReply(PacketType.ChannelSuccess, 0)));
         // Rekey callback doesn't actually rekey (just counts); next read
         // picks up the SUCCESS packet.
+        got.Dispose();
         got = await h.Router.WaitAsync(
             [PacketType.ChannelSuccess, PacketType.ChannelFailure],
             TestContext.Current.CancellationToken);
@@ -442,6 +443,7 @@ public class RekeyAutoTriggerTests
 
         public void Dispose()
         {
+            _queue.Dispose();
             try
             {
                 _router.Dispose();

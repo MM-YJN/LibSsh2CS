@@ -57,10 +57,10 @@ public class SshListenerTests
 
             // Verify the wire payload had the explicit host.
             RawPacket wire = h.SentGlobalRequest;
-            Assert.Equal("tcpip-forward", ReadNameAt(wire.Payload, 1));
-            Assert.Equal("127.0.0.1", ReadStringAt(wire.Payload, 1 + 4 + "tcpip-forward".Length + 1));
+            Assert.Equal("tcpip-forward", ReadNameAt(wire.Payload.ToArray(), 1));
+            Assert.Equal("127.0.0.1", ReadStringAt(wire.Payload.ToArray(), 1 + 4 + "tcpip-forward".Length + 1));
             Assert.Equal(22u,
-                BinaryPrimitives.ReadUInt32BigEndian(wire.Payload.AsSpan(
+                BinaryPrimitives.ReadUInt32BigEndian(wire.Payload.Span.Slice(
                     1 + 4 + "tcpip-forward".Length + 1 + 4 + "127.0.0.1".Length, 4)));
         }
         finally
@@ -118,8 +118,8 @@ public class SshListenerTests
             cancellationToken: TestContext.Current.CancellationToken));
 
         // Drain the GLOBAL_REQUEST then feed REQUEST_FAILURE.
-        RawPacket sent = await harness.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
-        Assert.Equal("tcpip-forward", ReadNameAt(sent.Payload, 1));
+        using RawPacket sent = await harness.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        Assert.Equal("tcpip-forward", ReadNameAt(sent.Payload.ToArray(), 1));
 
         byte[] failPayload = new byte[] { (byte)PacketType.RequestFailure };
         await harness.ServerWriter.WriteAsync(
@@ -148,15 +148,15 @@ public class SshListenerTests
 
         // Read the second GLOBAL_REQUEST on the wire (the first was the
         // tcpip-forward setup, already consumed by ListenAndReplyAsync).
-        RawPacket cancel = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket cancel = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.GlobalRequest, cancel.Type);
-        Assert.Equal("cancel-tcpip-forward", ReadNameAt(cancel.Payload, 1));
-        Assert.Equal(0, cancel.Payload[1 + 4 + "cancel-tcpip-forward".Length]);   // wantReply=false
+        Assert.Equal("cancel-tcpip-forward", ReadNameAt(cancel.Payload.ToArray(), 1));
+        Assert.Equal(0, cancel.Payload.Span[1 + 4 + "cancel-tcpip-forward".Length]);   // wantReply=false
 
         int extraOffset = 1 + 4 + "cancel-tcpip-forward".Length + 1;
-        Assert.Equal("0.0.0.0", ReadStringAt(cancel.Payload, extraOffset));
+        Assert.Equal("0.0.0.0", ReadStringAt(cancel.Payload.ToArray(), extraOffset));
         Assert.Equal(7000u,
-            BinaryPrimitives.ReadUInt32BigEndian(cancel.Payload.AsSpan(
+            BinaryPrimitives.ReadUInt32BigEndian(cancel.Payload.Span.Slice(
                 extraOffset + 4 + "0.0.0.0".Length, 4)));
 
         Assert.True(h.Listener.IsDisposed);
@@ -170,8 +170,8 @@ public class SshListenerTests
 
         await h.Listener.DisposeAsync();
         // Drain the cancel-tcpip-forward from the first Dispose.
-        RawPacket firstCancel = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
-        Assert.Equal("cancel-tcpip-forward", ReadNameAt(firstCancel.Payload, 1));
+        using RawPacket firstCancel = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        Assert.Equal("cancel-tcpip-forward", ReadNameAt(firstCancel.Payload.ToArray(), 1));
 
         // Second Dispose must be a no-op — no additional wire output.
         await h.Listener.DisposeAsync();
@@ -229,8 +229,8 @@ public class SshListenerTests
         // SshListener.DisposeAsync sends cancel-tcpip-forward FIRST (parity
         // channel.c:757-778), then drains the queued channels. Read the
         // cancel packet first.
-        RawPacket cancel = await h.ServerReader.ReadPacketAsync(cancellationToken);
-        Assert.Equal("cancel-tcpip-forward", ReadNameAt(cancel.Payload, 1));
+        using RawPacket cancel = await h.ServerReader.ReadPacketAsync(cancellationToken);
+        Assert.Equal("cancel-tcpip-forward", ReadNameAt(cancel.Payload.ToArray(), 1));
 
         // For each of the 2 channels, expect EOF + CLOSE on the wire, then
         // feed back a CHANNEL_CLOSE that the router can dispatch to the
@@ -238,9 +238,9 @@ public class SshListenerTests
         // inbound CLOSE's recip field must equal our localId).
         foreach (SshChannel ch in new[] { ch1, ch2 })
         {
-            RawPacket eof = await h.ServerReader.ReadPacketAsync(cancellationToken);
+            using RawPacket eof = await h.ServerReader.ReadPacketAsync(cancellationToken);
             Assert.Equal(PacketType.ChannelEof, eof.Type);
-            RawPacket close = await h.ServerReader.ReadPacketAsync(cancellationToken);
+            using RawPacket close = await h.ServerReader.ReadPacketAsync(cancellationToken);
             Assert.Equal(PacketType.ChannelClose, close.Type);
 
             byte[] closeReply = new byte[5];

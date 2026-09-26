@@ -63,7 +63,7 @@ public class GlobalRequestWaitAllocBenchmarks
         await _h.ServerWriter.WriteAsync(_reply, CancellationToken.None).ConfigureAwait(false);
         await _h.ServerWriter.FlushAsync(CancellationToken.None).ConfigureAwait(false);
 
-        RawPacket reply = await _h.Router.SendGlobalRequestAsync(
+        using RawPacket reply = await _h.Router.SendGlobalRequestAsync(
             "keepalive@libssh2.org", ReadOnlyMemory<byte>.Empty, wantReply: true, CancellationToken.None)
             .ConfigureAwait(false);
 

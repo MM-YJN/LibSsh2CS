@@ -33,7 +33,7 @@ public class RekeyReentryTests
         // (the mock never replies — that's the point: the rekey stays in flight).
         using var cts1 = new CancellationTokenSource();
         Task rekey1 = session.RekeyAsync(cts1.Token);
-        RawPacket kex1 = await mock.ServerPacketReader!.ReadPacketAsync(ct);
+        using RawPacket kex1 = await mock.ServerPacketReader!.ReadPacketAsync(ct);
         Assert.Equal(PacketType.KexInit, kex1.Type);
 
         // Second concurrent rekey: post-fix the atomic guard throws Proto

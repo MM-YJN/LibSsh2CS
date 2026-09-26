@@ -71,7 +71,7 @@ public class CooperativePumperTests
         await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(
             PacketType.ChannelSuccess, BuildReplyPayload(PacketType.ChannelSuccess, 5)));
 
-        RawPacket got = await h.Router.WaitForReplyAsync(
+        using RawPacket got = await h.Router.WaitForReplyAsync(
             ch, [PacketType.ChannelSuccess, PacketType.ChannelFailure],
             TestContext.Current.CancellationToken);
 
@@ -105,22 +105,22 @@ public class CooperativePumperTests
                 PacketType.ChannelSuccess, BuildReplyPayload(PacketType.ChannelSuccess, 0)));
 
         // A's WaitForReply should return A's reply (recipient=0), not B's.
-        RawPacket replyA = await h.Router.WaitForReplyAsync(
+        using RawPacket replyA = await h.Router.WaitForReplyAsync(
             chA,
             [PacketType.ChannelSuccess, PacketType.ChannelFailure],
             TestContext.Current.CancellationToken);
 
         Assert.Equal(PacketType.ChannelSuccess, replyA.Type);
-        Assert.Equal(0u, BinaryPrimitives.ReadUInt32BigEndian(replyA.Payload.AsSpan(1, 4)));
+        Assert.Equal(0u, BinaryPrimitives.ReadUInt32BigEndian(replyA.Payload.Span.Slice(1, 4)));
 
         // B's reply is stashed in _pendingReplies; B's wait retrieves it next.
-        RawPacket replyB = await h.Router.WaitForReplyAsync(
+        using RawPacket replyB = await h.Router.WaitForReplyAsync(
             chB,
             [PacketType.ChannelSuccess, PacketType.ChannelFailure],
             TestContext.Current.CancellationToken);
 
         Assert.Equal(PacketType.ChannelSuccess, replyB.Type);
-        Assert.Equal(1u, BinaryPrimitives.ReadUInt32BigEndian(replyB.Payload.AsSpan(1, 4)));
+        Assert.Equal(1u, BinaryPrimitives.ReadUInt32BigEndian(replyB.Payload.Span.Slice(1, 4)));
     }
 
     // ── Unregister cleans up per-channel state ──────────────────────────
@@ -159,7 +159,7 @@ public class CooperativePumperTests
         // Pre-populate a reply by routing one through the router.
         await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(
             PacketType.ChannelFailure, BuildReplyPayload(PacketType.ChannelFailure, 7)));
-        RawPacket reply = await h.Router.WaitForReplyAsync(
+        using RawPacket reply = await h.Router.WaitForReplyAsync(
             ch,
             [PacketType.ChannelSuccess, PacketType.ChannelFailure],
             TestContext.Current.CancellationToken);

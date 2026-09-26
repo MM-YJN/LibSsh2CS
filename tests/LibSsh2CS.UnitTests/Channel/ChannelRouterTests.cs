@@ -282,10 +282,10 @@ public class ChannelRouterTests
 
         // The router wrote CHANNEL_FAILURE to the client's outbound pipe; read
         // it from the mock-server side and verify it's addressed to remoteId.
-        RawPacket reply = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket reply = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelFailure, reply.Type);
         // Payload: [100][u32 recipient=555]
-        Assert.Equal(555u, ReadUInt32At(reply.Payload, 1));
+        Assert.Equal(555u, ReadUInt32At(reply.Payload.ToArray(), 1));
         Assert.Equal(0, ch.ExitStatusInternal);   // status was still captured
     }
 
@@ -349,7 +349,7 @@ public class ChannelRouterTests
             ChannelTestHarness.BuildCleartextPacket(PacketType.ChannelSuccess, successPayload));
         h.CompleteInbound();
 
-        RawPacket reply = await h.Router.WaitAsync(
+        using RawPacket reply = await h.Router.WaitAsync(
             [PacketType.ChannelSuccess, PacketType.ChannelFailure], TestContext.Current.CancellationToken);
 
         // The interleaved DATA + ADJUST were routed (not stashed), then SUCCESS returned.
@@ -383,7 +383,7 @@ public class ChannelRouterTests
         Assert.Equal([7], ch.TryDequeueStdout());
 
         // Now wait for SUCCESS — retrieved from the stash (pipe is completed).
-        RawPacket reply = await h.Router.WaitAsync(
+        using RawPacket reply = await h.Router.WaitAsync(
             [PacketType.ChannelSuccess, PacketType.ChannelFailure], TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelSuccess, reply.Type);
     }

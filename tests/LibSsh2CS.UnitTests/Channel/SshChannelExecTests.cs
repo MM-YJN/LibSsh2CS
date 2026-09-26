@@ -24,16 +24,16 @@ public class SshChannelExecTests
 
         Task execTask = ch.ExecAsync("ls -la", TestContext.Current.CancellationToken);
 
-        RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket req = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelRequest, req.Type);
 
         // Parse: [98][u32 remoteId=77][string "exec"][bool want_reply][string cmd].
-        Assert.Equal((byte)PacketType.ChannelRequest, req.Payload[0]);
-        Assert.Equal(77u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.AsSpan(1, 4)));
-        Assert.Equal("exec", ReadStringAt(req.Payload, 5));
+        Assert.Equal((byte)PacketType.ChannelRequest, req.Payload.Span[0]);
+        Assert.Equal(77u, BinaryPrimitives.ReadUInt32BigEndian(req.Payload.Span.Slice(1, 4)));
+        Assert.Equal("exec", ReadStringAt(req.Payload.ToArray(), 5));
         // After [string "exec"]: offset 5 + 4 (strlen) + 4 ("exec") = 13 → want_reply.
-        Assert.Equal(1, req.Payload[13]);   // want_reply = TRUE
-        Assert.Equal("ls -la", ReadStringAt(req.Payload, 14));
+        Assert.Equal(1, req.Payload.Span[13]);   // want_reply = TRUE
+        Assert.Equal("ls -la", ReadStringAt(req.Payload.ToArray(), 14));
 
         // Reply SUCCESS.
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildSimpleReplyPayload(PacketType.ChannelSuccess, 0)));
@@ -49,7 +49,7 @@ public class SshChannelExecTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task execTask = ch.ExecAsync("echo hi", TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // consume exec request
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // consume exec request
 
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildSimpleReplyPayload(PacketType.ChannelSuccess, 0)));
         h.CompleteInbound();
@@ -67,7 +67,7 @@ public class SshChannelExecTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task execTask = ch.ExecAsync("rm -rf /", TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
 
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelFailure, BuildSimpleReplyPayload(PacketType.ChannelFailure, 0)));
         h.CompleteInbound();
@@ -87,7 +87,7 @@ public class SshChannelExecTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task execTask = ch.ExecAsync("first", TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildSimpleReplyPayload(PacketType.ChannelSuccess, 0)));
         h.CompleteInbound();
         await execTask;
@@ -107,7 +107,7 @@ public class SshChannelExecTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         Task execTask = ch.ExecAsync("denied", TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelFailure, BuildSimpleReplyPayload(PacketType.ChannelFailure, 0)));
         h.CompleteInbound();
         await Assert.ThrowsAsync<SshException>(async () => await execTask);
@@ -128,7 +128,7 @@ public class SshChannelExecTests
         SshChannel chOther = h.CreateChannel(localId: 1, remoteId: 2);
 
         Task execTask = chExec.ExecAsync("cmd", TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);   // exec request
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();   // exec request
 
         // Feed: DATA for chOther(1), then SUCCESS for chExec(0).
         await h.FeedInboundAsync(

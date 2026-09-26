@@ -91,9 +91,12 @@ internal sealed class PacketReader : IAsyncDisposable
     private long _inboundBytes;
     private long _inboundPackets;
 
-    public PacketReader(PipeReader reader)
+    private readonly ArrayPool<byte> _payloadPool;
+
+    public PacketReader(PipeReader reader, ArrayPool<byte>? payloadPool = null)
     {
         _reader = reader;
+        _payloadPool = payloadPool ?? ArrayPool<byte>.Shared;
     }
 
     /// <summary>The current inbound sequence number (0-based, increments per packet).</summary>
@@ -196,8 +199,16 @@ internal sealed class PacketReader : IAsyncDisposable
             ReadOnlySequence<byte> buffer = result.Buffer;
             if (TryReadPacket(buffer, out RawPacket packet, out SequencePosition consumedTo))
             {
-                _reader.AdvanceTo(consumedTo);
-                return packet;
+                try
+                {
+                    _reader.AdvanceTo(consumedTo);
+                    return packet;
+                }
+                catch
+                {
+                    packet.Dispose();
+                    throw;
+                }
             }
 
             // Not enough data yet — examine the whole buffer (signal the pipe to
@@ -252,9 +263,17 @@ internal sealed class PacketReader : IAsyncDisposable
         ReadOnlySequence<byte> buffer = result.Buffer;
         if (TryReadPacket(buffer, out RawPacket pkt, out SequencePosition consumedTo))
         {
-            _reader.AdvanceTo(consumedTo);
-            packet = pkt;
-            return true;
+            try
+            {
+                _reader.AdvanceTo(consumedTo);
+                packet = pkt;
+                return true;
+            }
+            catch
+            {
+                pkt.Dispose();
+                throw;
+            }
         }
 
         // Partial packet buffered — don't consume; the next blocking read will
@@ -447,10 +466,8 @@ internal sealed class PacketReader : IAsyncDisposable
 
         // Full packet available — commit. Copy the wire frame into a pooled
         // buffer (the pipe's memory is only valid until the next AdvanceTo);
-        // it is returned in the finally below. Each per-family helper decrypts
-        // in place (or into a reused scratch, for AEAD) and produces the final
-        // caller-owned payload array directly, so the only per-packet
-        // allocation is that one payload array.
+        // it is returned in the finally below. Extraction copies channel data to
+        // an owned rental and control payloads to ordinary arrays.
         byte[] wire = ArrayPool<byte>.Shared.Rent(totalWire);
         byte[]? consumedFirstBlock = null;
         try
@@ -495,23 +512,15 @@ internal sealed class PacketReader : IAsyncDisposable
             // after auth by ActivateDelayedCompression (called from
             // SshSession.MarkAuthenticated for zlib@openssh.com).
             //
-            // The uncompressed path materializes the single caller-owned array
-            // that RawPacket.Payload's ownership contract requires. The
-            // compressed path decompresses straight from the span, so it also
-            // allocates exactly one array (the decompressed result) instead of
-            // copying the compressed payload out first and discarding it.
-            byte[] payload;
+            // Inspect the actual message type only after decompression. Both
+            // paths use the same bounded payload extraction and lease policy.
             if (_compressionActive && _compression is not null && _compression.Compresses)
             {
                 _decompressScratch.ResetWrittenCount();
                 _compression.Decompress(payloadSpan, _decompressScratch);
-                payload = _decompressScratch.WrittenSpan.ToArray();
-                type = payload.Length > 0 ? payload[0] : -1;
+                payloadSpan = _decompressScratch.WrittenSpan;
             }
-            else
-            {
-                payload = payloadSpan.ToArray();
-            }
+            type = payloadSpan.Length > 0 ? payloadSpan[0] : -1;
 
             // ── seqno increment + strict-KEX NEWKEYS reset (transport.c:286, 342-345) ──
             // The packet records the seqno it was received under (pre-reset), so
@@ -531,7 +540,7 @@ internal sealed class PacketReader : IAsyncDisposable
             _inboundBytes += totalWire;
             _inboundPackets++;
 
-            packet = new RawPacket(type, payload, seqno);
+            packet = ExtractPayload(payloadSpan, seqno);
             return true;
         }
         finally
@@ -585,6 +594,20 @@ internal sealed class PacketReader : IAsyncDisposable
     /// </summary>
     private readonly PooledByteBufferWriter _aeadScratch = new(4096) { ClearOnReturn = true };
 
+    private RawPacket ExtractPayload(ReadOnlySpan<byte> payload, uint seqno)
+    {
+        int type = payload.IsEmpty ? -1 : payload[0];
+        if (type is not (PacketType.ChannelData or PacketType.ChannelExtendedData))
+        {
+            return new RawPacket(type, payload.ToArray(), seqno);
+        }
+
+        byte[] rented = _payloadPool.Rent(payload.Length);
+        payload.CopyTo(rented);
+        return new RawPacket(type, rented.AsMemory(0, payload.Length), seqno,
+            new PayloadLease(_payloadPool, rented, payload.Length));
+    }
+
     private bool TryReadCleartext(ReadOnlySequence<byte> buffer, out RawPacket packet,
         out SequencePosition consumedTo)
     {
@@ -637,10 +660,9 @@ internal sealed class PacketReader : IAsyncDisposable
         }
 
         int payloadLen = (int)wireLength - 1 - paddingLength;
-        byte[] payload = new byte[payloadLen];
-        buffer.Slice(5, payloadLen).CopyTo(payload);
-
-        int type = payload.Length > 0 ? payload[0] : -1;
+        ReadOnlySequence<byte> payload = buffer.Slice(5, payloadLen);
+        var payloadReader = new SequenceReader<byte>(payload);
+        int type = payloadReader.TryRead(out byte typeByte) ? typeByte : -1;
         uint seqno = _seqno;
         _seqno++;
         if (_strictKex && type == PacketType.NewKeys)
@@ -652,7 +674,17 @@ internal sealed class PacketReader : IAsyncDisposable
         _inboundBytes += totalWire;
         _inboundPackets++;
 
-        packet = new RawPacket(type, payload, seqno);
+        if (type is PacketType.ChannelData or PacketType.ChannelExtendedData)
+        {
+            byte[] rented = _payloadPool.Rent(payloadLen);
+            payload.CopyTo(rented);
+            packet = new RawPacket(type, rented.AsMemory(0, payloadLen), seqno,
+                new PayloadLease(_payloadPool, rented, payloadLen));
+        }
+        else
+        {
+            packet = new RawPacket(type, payload.ToArray(), seqno);
+        }
         consumedTo = buffer.GetPosition(totalWire);
         return true;
     }
@@ -819,11 +851,8 @@ internal sealed class PacketReader : IAsyncDisposable
     /// <c>[4-byte length][1-byte padding_length][payload][padding]</c>) or after
     /// the 4-byte length has already been stripped (ETM layout,
     /// <c>[1-byte padding_length][payload][padding]</c>). Returns a view into
-    /// the caller's body rather than a copy: the caller decides whether to
-    /// materialize the one caller-owned array that
-    /// <see cref="RawPacket.Payload"/>'s ownership contract requires (the
-    /// uncompressed path) or decompress straight from the view (the compressed
-    /// path, which previously copied the payload out only to discard it).
+    /// the caller's body rather than a copy. Extraction or decompression consumes
+    /// the view before its backing scratch buffer is returned or reused.
     /// </summary>
     private static ReadOnlySpan<byte> SlicePayload(ReadOnlySpan<byte> body, int payloadStart,
         int paddingLength)

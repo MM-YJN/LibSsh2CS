@@ -118,9 +118,9 @@ public class SshChannelExitInfoTests
         Task<int> statusTask = Task.Run(async () => await ch.GetExitStatusAsync(TestContext.Current.CancellationToken));
 
         // Expect a CHANNEL_FAILURE on the wire (router auto-reply for want_reply=TRUE).
-        RawPacket reply = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket reply = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelFailure, reply.Type);
-        Assert.Equal(9u, BinaryPrimitives.ReadUInt32BigEndian(reply.Payload.AsSpan(1, 4)));
+        Assert.Equal(9u, BinaryPrimitives.ReadUInt32BigEndian(reply.Payload.Span.Slice(1, 4)));
 
         Assert.Equal(13, await statusTask);
     }

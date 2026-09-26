@@ -146,23 +146,20 @@ public sealed class SshChannel : IAsyncDisposable
     // ── Inbound buffers (stderr buffered separately, NORMAL mode) ──
 
     /// <summary>
-    /// Zero-copy view into an owned packet payload array: the data body
-    /// occupies <c>Buffer[Start .. Start+Length)</c>. Delivery enqueues the
-    /// already-owned packet payload via this segment instead of allocating a
-    /// second array and copying the body (the previous per-packet double
-    /// allocation). <see cref="Buffer"/> retains the leading packet header
-    /// bytes before <see cref="Start"/>, which is harmless — the array was
-    /// already allocated at that size.
+    /// A bounded view of channel data and its optional packet lease. The lease
+    /// retains the complete payload (including any truncated bytes) until the
+    /// segment is consumed or discarded under the buffer lock.
     /// </summary>
-    private readonly struct DataSegment(byte[] buffer, int start, int length)
+    private readonly struct DataSegment(ReadOnlyMemory<byte> data, PayloadLease? lease)
     {
-        public readonly byte[] Buffer = buffer;
-        public readonly int Start = start;
-        public readonly int Length = length;
+        public readonly ReadOnlyMemory<byte> Data = data;
+        public readonly PayloadLease? Lease = lease;
+        public int Length => Data.Length;
     }
 
     /// <summary>FIFO of unread stdout payloads (<c>SSH_MSG_CHANNEL_DATA</c> bodies).</summary>
     private readonly Queue<DataSegment> _stdoutBuffer = new();
+    private bool _buffersTerminal;
 
     /// <summary>
     /// Read cursor into the front <see cref="_stdoutBuffer"/> entry — bytes of
@@ -431,8 +428,13 @@ public sealed class SshChannel : IAsyncDisposable
     /// <param name="payload">The full packet payload (type byte at offset 0).</param>
     /// <param name="isExtended">True for <c>SSH_MSG_CHANNEL_EXTENDED_DATA</c>
     /// (stderr), false for <c>SSH_MSG_CHANNEL_DATA</c> (stdout).</param>
-    internal void DeliverDataPayload(byte[] payload, bool isExtended)
+    /// <param name="lease">Ownership transferred only when delivery returns true.</param>
+    internal bool DeliverDataPayload(ReadOnlyMemory<byte> payload, bool isExtended, PayloadLease? lease = null)
+        => TryDeliverDataPayload(payload, isExtended, lease, out _);
+
+    internal bool TryDeliverDataPayload(ReadOnlyMemory<byte> payload, bool isExtended, PayloadLease? lease, out uint refund)
     {
+        refund = 0;
         // payload layout (after type byte at [0]):
         //   DATA:          [u32 recipient][u32 datalen][data]
         //   EXTENDED_DATA: [u32 recipient][u32 datatype][u32 datalen][data]
@@ -440,13 +442,22 @@ public sealed class SshChannel : IAsyncDisposable
         int head = isExtended ? 13 : 9;
         if (payload.Length <= head)
         {
-            return;
+            return false;
         }
 
         int dataLen = payload.Length - head;
 
         lock (_windowLock)
         {
+            if (_buffersTerminal)
+            {
+                return false;
+            }
+            if (isExtended && _extendedDataMode == SshExtendedDataMode.Ignore)
+            {
+                refund = ComputeIgnoreRefundAmount(payload);
+                return false;
+            }
             // packet.c:1037-1046 — peer exceeded its offered packet_size: truncate.
             if ((uint)dataLen > _inboundMaxPacket)
             {
@@ -456,7 +467,7 @@ public sealed class SshChannel : IAsyncDisposable
             // packet.c:1047-1058 — window already full of unread data: drop entirely.
             if (_inboundWindow <= _readAvail)
             {
-                return;
+                return false;
             }
 
             // packet.c:1062-1069 — peer sent more than the window allows: truncate.
@@ -467,15 +478,15 @@ public sealed class SshChannel : IAsyncDisposable
 
             if (dataLen <= 0)
             {
-                return;
+                return false;
             }
 
             // packet.c:1060 — receiving data revokes a prior remote EOF.
             _remoteEof = false;
 
             // Enqueue a zero-copy view of the already-owned packet payload;
-            // the segment's Start skips the 9/13-byte header before the data.
-            DataSegment segment = new(payload, head, dataLen);
+            // the slice skips the 9/13-byte header before the data.
+            DataSegment segment = new(payload.Slice(head, dataLen), lease);
 
             // packet.c:1074 — bump read_avail + buffer, atomically.
             _readAvail += (uint)dataLen;
@@ -487,6 +498,7 @@ public sealed class SshChannel : IAsyncDisposable
             {
                 _stdoutBuffer.Enqueue(segment);
             }
+            return true;
         }
     }
 
@@ -504,7 +516,7 @@ public sealed class SshChannel : IAsyncDisposable
     /// offset 0).</param>
     /// <returns>Bytes to refund via <c>SSH_MSG_CHANNEL_WINDOW_ADJUST</c>
     /// (0 = nothing to refund: window already full / empty payload).</returns>
-    internal uint ComputeIgnoreRefundAmount(byte[] payload)
+    internal uint ComputeIgnoreRefundAmount(ReadOnlyMemory<byte> payload)
     {
         const int Head = 13;   // [type(1)][recip(4)][datatype(4)][datalen(4)]
         if (payload.Length <= Head)
@@ -625,8 +637,16 @@ public sealed class SshChannel : IAsyncDisposable
             }
 
             DataSegment segment = _stdoutBuffer.Dequeue();
+            int offset = _stdoutHeadOffset;
             _stdoutHeadOffset = 0;
-            return segment.Buffer.AsSpan(segment.Start, segment.Length).ToArray();
+            try
+            {
+                return segment.Data.Span.Slice(offset).ToArray();
+            }
+            finally
+            {
+                segment.Lease?.Dispose();
+            }
         }
     }
 
@@ -643,9 +663,11 @@ public sealed class SshChannel : IAsyncDisposable
         {
             byte[][] snapshot = new byte[_stderrBuffer.Count][];
             int i = 0;
+            int offset = _stderrHeadOffset;
             foreach (DataSegment segment in _stderrBuffer)
             {
-                snapshot[i++] = segment.Buffer.AsSpan(segment.Start, segment.Length).ToArray();
+                snapshot[i++] = segment.Data.Span.Slice(offset).ToArray();
+                offset = 0;
             }
 
             return snapshot;
@@ -983,7 +1005,7 @@ public sealed class SshChannel : IAsyncDisposable
     /// (<c>channel.c:251-266</c>):
     /// <c>[91][u32 recip=localId][u32 sender=remoteId][u32 window][u32 maxPacket]</c>.
     /// </summary>
-    private static void ParseOpenConfirmation(byte[] payload,
+    private static void ParseOpenConfirmation(ReadOnlyMemory<byte> payload,
         out uint remoteId, out uint outboundWindow, out uint outboundMaxPacket)
     {
         if (payload.Length < 17)
@@ -992,16 +1014,16 @@ public sealed class SshChannel : IAsyncDisposable
         }
 
         // Skip type(1) + recip(4); sender=remoteId at offset 5, window at 9, packet at 13.
-        remoteId = BinaryPrimitives.ReadUInt32BigEndian(payload.AsSpan(5, 4));
-        outboundWindow = BinaryPrimitives.ReadUInt32BigEndian(payload.AsSpan(9, 4));
-        outboundMaxPacket = BinaryPrimitives.ReadUInt32BigEndian(payload.AsSpan(13, 4));
+        remoteId = BinaryPrimitives.ReadUInt32BigEndian(payload.Span.Slice(5, 4));
+        outboundWindow = BinaryPrimitives.ReadUInt32BigEndian(payload.Span.Slice(9, 4));
+        outboundMaxPacket = BinaryPrimitives.ReadUInt32BigEndian(payload.Span.Slice(13, 4));
     }
 
     /// <summary>
     /// Parses <c>SSH_MSG_CHANNEL_OPEN_FAILURE</c>:
     /// <c>[92][u32 recip][u32 reason][string desc][string lang]</c>.
     /// </summary>
-    private static void ParseOpenFailure(byte[] payload, out int reason, out string description)
+    private static void ParseOpenFailure(ReadOnlyMemory<byte> payload, out int reason, out string description)
     {
         // Fall back to a generic message if malformed (parity channel.c:306-308 default).
         reason = 0;
@@ -1525,49 +1547,19 @@ public sealed class SshChannel : IAsyncDisposable
     public async Task SetExtendedDataModeAsync(
         SshExtendedDataMode mode, CancellationToken cancellationToken = default)
     {
-        SshExtendedDataMode previous = _extendedDataMode;
-        _extendedDataMode = mode;
-
-        // Transitioning INTO Ignore: flush already-buffered stderr + refund.
-        if (mode == SshExtendedDataMode.Ignore && previous != SshExtendedDataMode.Ignore)
-        {
-            await FlushStderrBufferAsync(cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>
-    /// Drops all buffered stderr, decrements <see cref="_readAvail"/> by the
-    /// freed byte count, and sends a <c>WINDOW_ADJUST</c> for those bytes
-    /// (parity <c>_libssh2_channel_flush(EXTENDED_DATA)</c>,
-    /// <c>channel.c:1669-1758</c>). Used by <see cref="SetExtendedDataModeAsync"/>
-    /// when transitioning to <see cref="SshExtendedDataMode.Ignore"/>.
-    /// </summary>
-    private async Task FlushStderrBufferAsync(CancellationToken cancellationToken)
-    {
-        uint freedBytes;
+        uint freedBytes = 0;
         lock (_windowLock)
         {
-            if (_stderrBuffer.Count == 0)
+            _extendedDataMode = mode;
+            if (mode == SshExtendedDataMode.Ignore)
             {
-                return;
-            }
-
-            freedBytes = 0;
-            while (_stderrBuffer.Count > 0)
-            {
-                freedBytes += (uint)_stderrBuffer.Dequeue().Length;
-            }
-
-            _stderrHeadOffset = 0;
-
-            // channel.c:1744 — read_avail -= flushed_bytes (floor at 0).
-            if (freedBytes >= _readAvail)
-            {
-                _readAvail = 0;
-            }
-            else
-            {
-                _readAvail -= freedBytes;
+                while (_stderrBuffer.TryDequeue(out DataSegment segment))
+                {
+                    freedBytes += (uint)(segment.Length - _stderrHeadOffset);
+                    _stderrHeadOffset = 0;
+                    segment.Lease?.Dispose();
+                }
+                _readAvail -= Math.Min(_readAvail, freedBytes);
             }
         }
 
@@ -2027,7 +2019,7 @@ public sealed class SshChannel : IAsyncDisposable
             DataSegment front = _stdoutBuffer.Peek();
             int available = front.Length - _stdoutHeadOffset;
             int toCopy = Math.Min(available, dest.Length - total);
-            front.Buffer.AsSpan(front.Start + _stdoutHeadOffset, toCopy)
+            front.Data.Span.Slice(_stdoutHeadOffset, toCopy)
                 .CopyTo(dest.Slice(total, toCopy));
             _stdoutHeadOffset += toCopy;
             total += toCopy;
@@ -2035,6 +2027,7 @@ public sealed class SshChannel : IAsyncDisposable
             if (_stdoutHeadOffset >= front.Length)
             {
                 _stdoutBuffer.Dequeue();
+                front.Lease?.Dispose();
                 _stdoutHeadOffset = 0;
             }
         }
@@ -2056,7 +2049,7 @@ public sealed class SshChannel : IAsyncDisposable
             DataSegment front = _stderrBuffer.Peek();
             int available = front.Length - _stderrHeadOffset;
             int toCopy = Math.Min(available, dest.Length - total);
-            front.Buffer.AsSpan(front.Start + _stderrHeadOffset, toCopy)
+            front.Data.Span.Slice(_stderrHeadOffset, toCopy)
                 .CopyTo(dest.Slice(total, toCopy));
             _stderrHeadOffset += toCopy;
             total += toCopy;
@@ -2064,6 +2057,7 @@ public sealed class SshChannel : IAsyncDisposable
             if (_stderrHeadOffset >= front.Length)
             {
                 _stderrBuffer.Dequeue();
+                front.Lease?.Dispose();
                 _stderrHeadOffset = 0;
             }
         }
@@ -2230,6 +2224,25 @@ public sealed class SshChannel : IAsyncDisposable
     // Close — _libssh2_channel_close (channel.c:2646-2727)
     // ════════════════════════════════════════════════════════════════════════
 
+    internal void ReleaseInboundBuffers()
+    {
+        lock (_windowLock)
+        {
+            _buffersTerminal = true;
+            while (_stdoutBuffer.TryDequeue(out DataSegment segment))
+            {
+                segment.Lease?.Dispose();
+            }
+            while (_stderrBuffer.TryDequeue(out DataSegment segment))
+            {
+                segment.Lease?.Dispose();
+            }
+            _stdoutHeadOffset = 0;
+            _stderrHeadOffset = 0;
+            _readAvail = 0;
+        }
+    }
+
     /// <summary>
     /// Closes the channel: sends <c>SSH_MSG_CHANNEL_EOF</c> (if not already
     /// sent), then <c>SSH_MSG_CHANNEL_CLOSE</c>, and waits for the peer's
@@ -2255,6 +2268,8 @@ public sealed class SshChannel : IAsyncDisposable
         {
             return;
         }
+
+        ReleaseInboundBuffers();
 
         if (_localClose)
         {

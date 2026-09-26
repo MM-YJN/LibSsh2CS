@@ -26,13 +26,13 @@ public class SshChannelWriteStderrTests
         var t = Task.Run(async () => await ch.WriteStderrAsync(
             new byte[] { 0x10, 0x20, 0x30 }, cancellationToken), cancellationToken);
 
-        RawPacket pkt = await h.ServerReader.ReadPacketAsync(cancellationToken);
+        using RawPacket pkt = await h.ServerReader.ReadPacketAsync(cancellationToken);
         Assert.Equal(PacketType.ChannelExtendedData, pkt.Type);
-        Assert.Equal((byte)PacketType.ChannelExtendedData, pkt.Payload[0]);
-        Assert.Equal(23u, BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.AsSpan(1, 4)));
-        Assert.Equal(1u, BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.AsSpan(5, 4)));   // data_type_code = STDERR
-        Assert.Equal(3u, BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.AsSpan(9, 4)));   // datalen
-        Assert.Equal([0x10, 0x20, 0x30], pkt.Payload.AsSpan(13, 3).ToArray());
+        Assert.Equal((byte)PacketType.ChannelExtendedData, pkt.Payload.Span[0]);
+        Assert.Equal(23u, BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.Span.Slice(1, 4)));
+        Assert.Equal(1u, BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.Span.Slice(5, 4)));   // data_type_code = STDERR
+        Assert.Equal(3u, BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.Span.Slice(9, 4)));   // datalen
+        Assert.Equal([0x10, 0x20, 0x30], pkt.Payload.Span.Slice(13, 3).ToArray());
 
         await t;
     }
@@ -54,15 +54,15 @@ public class SshChannelWriteStderrTests
         var t = Task.Run(async () => await ch.WriteStderrAsync(data, cancellationToken), cancellationToken);
 
         // First chunk: WriteChunkCap (32700).
-        RawPacket p1 = await h.ServerReader.ReadPacketAsync(cancellationToken);
+        using RawPacket p1 = await h.ServerReader.ReadPacketAsync(cancellationToken);
         Assert.Equal(PacketType.ChannelExtendedData, p1.Type);
-        uint len1 = BinaryPrimitives.ReadUInt32BigEndian(p1.Payload.AsSpan(9, 4));
+        uint len1 = BinaryPrimitives.ReadUInt32BigEndian(p1.Payload.Span.Slice(9, 4));
         Assert.Equal((uint)ChannelConstants.WriteChunkCap, len1);
 
         // Second chunk: remaining 100 bytes.
-        RawPacket p2 = await h.ServerReader.ReadPacketAsync(cancellationToken);
+        using RawPacket p2 = await h.ServerReader.ReadPacketAsync(cancellationToken);
         Assert.Equal(PacketType.ChannelExtendedData, p2.Type);
-        uint len2 = BinaryPrimitives.ReadUInt32BigEndian(p2.Payload.AsSpan(9, 4));
+        uint len2 = BinaryPrimitives.ReadUInt32BigEndian(p2.Payload.Span.Slice(9, 4));
         Assert.Equal(100u, len2);
 
         await t;
@@ -98,12 +98,12 @@ public class SshChannelWriteStderrTests
         uint w0 = ch.OutboundWindow;
 
         await ch.WriteStderrAsync(new byte[] { 1, 2, 3, 4 }, TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         uint w1 = ch.OutboundWindow;
         Assert.Equal(w0 - 4, w1);
 
         await ch.WriteAsync(new byte[] { 5, 6 }, TestContext.Current.CancellationToken);
-        _ = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
         Assert.Equal(w1 - 2, ch.OutboundWindow);
     }
 
@@ -123,7 +123,7 @@ public class SshChannelWriteStderrTests
             ChannelTestHarness.BuildWindowAdjustPayload(0, 4096)));
         h.CompleteInbound();
 
-        RawPacket pkt = await h.ServerReader.ReadPacketAsync(cancellationToken);
+        using RawPacket pkt = await h.ServerReader.ReadPacketAsync(cancellationToken);
         Assert.Equal(PacketType.ChannelExtendedData, pkt.Type);
         await t;
     }
@@ -153,10 +153,10 @@ public class SshChannelWriteStderrTests
         await ch.WriteAsync(new byte[] { 0x01 }, TestContext.Current.CancellationToken);
         await ch.WriteStderrAsync(new byte[] { 0x02 }, TestContext.Current.CancellationToken);
 
-        RawPacket stdout = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket stdout = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelData, stdout.Type);
 
-        RawPacket stderr = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
+        using RawPacket stderr = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelExtendedData, stderr.Type);
     }
 
