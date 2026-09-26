@@ -15,6 +15,19 @@ namespace LibSsh2CS.UnitTests.Transport;
 /// </remarks>
 public class KexInitTests
 {
+    [Fact]
+    public void Parse_SlicedMemory_OwnsReturnedCookieAndNames()
+    {
+        byte[] payload = KeyExchange.BuildKexInit(new MethodPreferences());
+        byte[] padded = new byte[payload.Length + 10];
+        payload.CopyTo(padded, 5);
+        KexInit parsed = KeyExchange.ParseKexInit(padded.AsMemory(5, payload.Length));
+        byte[] cookie = payload.AsSpan(1, 16).ToArray();
+        Array.Clear(padded);
+        Assert.Equal(cookie, parsed.Cookie);
+        Assert.Contains(KeyExchange.ExtInfoC, parsed.KexAlgorithms);
+    }
+
     // ── Build → Parse round-trip ───────────────────────────────────────
 
     [Fact]

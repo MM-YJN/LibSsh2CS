@@ -134,7 +134,7 @@ internal static class KeyExchange
         }
 
         // Slice past the type byte; the rest is cookie + 10 name-lists + bool + u32.
-        var seq = new ReadOnlySequence<byte>(payload.ToArray());
+        var seq = new ReadOnlySequence<byte>(payload);
         var r = new PacketWireReader(seq);
         _ = r.ReadByte(); // consume the type byte
 

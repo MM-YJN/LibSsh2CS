@@ -59,7 +59,7 @@ internal sealed record ExtInfo
                 "ParseExtInfo: payload does not begin with SSH_MSG_EXT_INFO");
         }
 
-        var seq = new ReadOnlySequence<byte>(payload.ToArray());
+        var seq = new ReadOnlySequence<byte>(payload);
         var r = new PacketWireReader(seq);
         _ = r.ReadByte();   // skip type byte (7)
         uint nrExtensions = r.ReadUInt32BigEndian();

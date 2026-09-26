@@ -12,6 +12,75 @@ namespace LibSsh2CS.UnitTests.Util;
 /// </summary>
 public class PacketWireReaderTests
 {
+    [Theory]
+    [InlineData("")]
+    [InlineData("ssh-ed25519")]
+    [InlineData("鍵交換🔑")]
+    [InlineData("malformed")]
+    public void ReadString_EverySplit_PreservesUtf8AndCursor(string text)
+    {
+        byte[] body = text == "malformed"
+            ? [0xE9, 0x8D, 0xB5, 0xF0, 0x9F, 0xFF, 0x80]
+            : System.Text.Encoding.UTF8.GetBytes(text);
+        byte[] wire = new byte[4 + body.Length + 1];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(wire, (uint)body.Length);
+        body.CopyTo(wire, 4);
+        wire[^1] = 42;
+        for (int split = 0; split <= wire.Length; split++)
+        {
+            ReadOnlySequence<byte> sequence = split == 0 || split == wire.Length
+                ? new ReadOnlySequence<byte>(wire)
+                : BuildSequence(new ArraySegment<byte>(wire, 0, split),
+                    new ArraySegment<byte>(wire, split, wire.Length - split));
+            var reader = new PacketWireReader(sequence);
+            Assert.Equal(System.Text.Encoding.UTF8.GetString(body), reader.ReadString());
+            Assert.Equal(4 + body.Length, reader.Position);
+            Assert.Equal(42, reader.ReadByte());
+            Assert.Equal(0, reader.Remaining);
+        }
+    }
+
+    [Theory]
+    [InlineData(3u)]
+    [InlineData(2147483648u)]
+    public void ReadString_InvalidBodyLength_PreservesBodyCursor(uint length)
+    {
+        byte[] wire = new byte[6];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(wire, length);
+        var reader = new PacketWireReader(new ReadOnlySequence<byte>(wire));
+        SshException? error = null;
+        try
+        {
+            reader.ReadString();
+        }
+        catch (SshException ex)
+        {
+            error = ex;
+        }
+        Assert.NotNull(error);
+        Assert.Equal(SshErrorCode.OutOfBoundary, error.ErrorCode);
+        Assert.Equal(4, reader.Position);
+        Assert.Equal(2, reader.Remaining);
+    }
+
+    [Fact]
+    public void ReadString_NonArrayBackedMemory_PreservesReplacementFallback()
+    {
+        byte[] wire = [0, 0, 0, 3, 0xFF, 0x80, 0x41];
+        using var memory = new NonArrayMemory(wire);
+        var reader = new PacketWireReader(new ReadOnlySequence<byte>(memory.Memory));
+        Assert.Equal(System.Text.Encoding.UTF8.GetString(wire, 4, 3), reader.ReadString());
+        Assert.Equal(wire.Length, reader.Position);
+    }
+
+    private sealed class NonArrayMemory(byte[] bytes) : MemoryManager<byte>
+    {
+        public override Span<byte> GetSpan() => bytes;
+        public override MemoryHandle Pin(int elementIndex = 0) => throw new NotSupportedException();
+        public override void Unpin() { }
+        protected override void Dispose(bool disposing) { }
+    }
+
     // ── ReadByte / ReadUInt32 ───────────────────────────────────────────
 
     [Fact]

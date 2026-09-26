@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Numerics;
 using System.Text;
+using System.Text.Unicode;
 
 namespace LibSsh2CS.Util;
 
@@ -149,8 +150,19 @@ internal ref struct PacketWireReader
                 $"ReadString: length {length} > int.MaxValue");
         }
 
-        byte[] bytes = ReadBytes((int)length);
-        return Encoding.UTF8.GetString(bytes);
+        if (!_reader.TryReadExact((int)length, out ReadOnlySequence<byte> bytes))
+        {
+            throw new SshException(SshErrorCode.OutOfBoundary,
+                $"ReadBytes: need {length}, have {_reader.Remaining}");
+        }
+
+        // Decode valid contiguous UTF-8 directly. On this runtime, decoding
+        // malformed UTF-8 through the span overload allocates more than the
+        // original array path, so preserve that fallback as well as its replacement
+        // behavior. A segmented body also keeps the original copying path.
+        return bytes.IsSingleSegment && Utf8.IsValid(bytes.FirstSpan)
+            ? Encoding.UTF8.GetString(bytes.FirstSpan)
+            : Encoding.UTF8.GetString(bytes.ToArray());
     }
 
     /// <summary>

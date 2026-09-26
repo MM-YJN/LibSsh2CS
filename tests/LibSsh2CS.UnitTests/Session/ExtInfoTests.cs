@@ -12,6 +12,19 @@ namespace LibSsh2CS.UnitTests.Session;
 /// </summary>
 public class ExtInfoTests
 {
+    [Fact]
+    public void Parse_SlicedMemory_OwnsReturnedValuesAndNames()
+    {
+        byte[] payload = BuildExtInfoPayload(("server-sig-algs", "ssh-ed25519"));
+        byte[] padded = new byte[payload.Length + 10];
+        payload.CopyTo(padded, 5);
+        var parsed = ExtInfo.Parse(padded.AsMemory(5, payload.Length));
+        Array.Clear(padded);
+        Assert.Equal("server-sig-algs", parsed.Extensions[0].Name);
+        Assert.Equal("ssh-ed25519"u8.ToArray(), parsed.Extensions[0].Value);
+        Assert.Equal(new[] { "ssh-ed25519" }, parsed.ServerSignatureAlgorithms);
+    }
+
     /// <summary>
     /// Parses a minimal EXT_INFO with a single <c>server-sig-algs</c> extension;
     /// asserts the algorithms are split on commas.

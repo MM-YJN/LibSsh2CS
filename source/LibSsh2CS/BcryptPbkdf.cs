@@ -85,6 +85,7 @@ internal static class BcryptPbkdf
     /// or <paramref name="keyLength"/> exceeds 32 × 32 bytes, or salt exceeds
     /// 1 MB. Matches the C function's <c>-1</c> return conditions.
     /// </exception>
+    [SuppressMessage("Performance", "IDE0230:Use UTF-8 string literal", Justification = "Magic plaintext constructed from char literals (not a UTF-8 string literal) to mirror the C source's uint8_t[] initializer byte-for-byte; the byte-array form is deliberate for parity with blowfish.c.")]
     public static byte[] Derive(ReadOnlySpan<byte> password, ReadOnlySpan<byte> salt, uint rounds, int keyLength)
     {
         // Validate (mirrors the C function's early-return conditions).
@@ -125,67 +126,8 @@ internal static class BcryptPbkdf
         byte[] outs = new byte[BcryptHashSize];
         byte[] tmpout = new byte[BcryptHashSize];
 
-        // Generate key material, BcryptHashSize bytes at a time.
-        for (uint count = 1; keyLength > 0; count++)
-        {
-            BinaryPrimitives.WriteUInt32BigEndian(countsalt.AsSpan(salt.Length, 4), count);
-
-            // First round: salt is the count-augmented salt.
-            SHA512.HashData(countsalt, sha2salt.AsSpan());
-
-            BcryptHash(sha2pass, sha2salt, tmpout);
-            Array.Copy(tmpout, outs, BcryptHashSize);
-
-            for (uint i = 1u; i < rounds; i++)
-            {
-                // Subsequent rounds: salt is the previous output.
-                SHA512.HashData(tmpout, sha2salt.AsSpan());
-
-                BcryptHash(sha2pass, sha2salt, tmpout);
-                for (int j = 0; j < BcryptHashSize; j++)
-                {
-                    outs[j] ^= tmpout[j];
-                }
-            }
-
-            // pbkdf2 deviation: output non-linearly.
-            if (amt > keyLength)
-            {
-                amt = keyLength;
-            }
-
-            int written;
-            for (written = 0; written < amt; written++)
-            {
-                int dest = written * stride + (int)(count - 1);
-                if (dest >= origKeyLen)
-                {
-                    break;
-                }
-
-                key[dest] = outs[written];
-            }
-
-            keyLength -= written;
-        }
-
-        // Zap sensitive state.
-        CryptographicOperations.ZeroMemory(sha2pass);
-        CryptographicOperations.ZeroMemory(sha2salt);
-        CryptographicOperations.ZeroMemory(outs);
-        CryptographicOperations.ZeroMemory(tmpout);
-        CryptographicOperations.ZeroMemory(countsalt);
-
-        return key;
-    }
-
-    /// <summary>
-    /// The bcrypt hash function. Ported 1:1 from <c>bcrypt_hash()</c>.
-    /// Operates on pre-hashed (SHA-512) inputs and produces a 32-byte output.
-    /// </summary>
-    [SuppressMessage("Performance", "IDE0230:Use UTF-8 string literal", Justification = "Magic plaintext constructed from char literals (not a UTF-8 string literal) to mirror the C source's uint8_t[] initializer byte-for-byte; the byte-array form is deliberate for parity with blowfish.c.")]
-    private static void BcryptHash(byte[] sha2pass, byte[] sha2salt, byte[] outs)
-    {
+        // Reuse working state within this derivation only. BcryptHash resets
+        // all key tables and reloads every ciphertext word before each hash.
         var state = new BlowfishContext();
 
         // Magic plaintext: "OxychromaticBlowfishSwatDynamite" (32 bytes).
@@ -203,6 +145,74 @@ internal static class BcryptPbkdf
 
         uint[] cdata = new uint[BcryptBlocks];
 
+        try
+        {
+            // Generate key material, BcryptHashSize bytes at a time.
+            for (uint count = 1; keyLength > 0; count++)
+            {
+                BinaryPrimitives.WriteUInt32BigEndian(countsalt.AsSpan(salt.Length, 4), count);
+
+                // First round: salt is the count-augmented salt.
+                SHA512.HashData(countsalt, sha2salt.AsSpan());
+
+                BcryptHash(state, ciphertext, cdata, sha2pass, sha2salt, tmpout);
+                Array.Copy(tmpout, outs, BcryptHashSize);
+
+                for (uint i = 1u; i < rounds; i++)
+                {
+                    // Subsequent rounds: salt is the previous output.
+                    SHA512.HashData(tmpout, sha2salt.AsSpan());
+
+                    BcryptHash(state, ciphertext, cdata, sha2pass, sha2salt, tmpout);
+                    for (int j = 0; j < BcryptHashSize; j++)
+                    {
+                        outs[j] ^= tmpout[j];
+                    }
+                }
+
+                // pbkdf2 deviation: output non-linearly.
+                if (amt > keyLength)
+                {
+                    amt = keyLength;
+                }
+
+                int written;
+                for (written = 0; written < amt; written++)
+                {
+                    int dest = written * stride + (int)(count - 1);
+                    if (dest >= origKeyLen)
+                    {
+                        break;
+                    }
+
+                    key[dest] = outs[written];
+                }
+
+                keyLength -= written;
+            }
+
+            return key;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(sha2pass);
+            CryptographicOperations.ZeroMemory(sha2salt);
+            CryptographicOperations.ZeroMemory(outs);
+            CryptographicOperations.ZeroMemory(tmpout);
+            CryptographicOperations.ZeroMemory(countsalt);
+            CryptographicOperations.ZeroMemory(ciphertext);
+            CryptographicOperations.ZeroMemory(System.Runtime.InteropServices.MemoryMarshal.AsBytes(cdata.AsSpan()));
+            state.Clear();
+        }
+    }
+
+    /// <summary>
+    /// The bcrypt hash function. Ported 1:1 from <c>bcrypt_hash()</c>.
+    /// Operates on pre-hashed (SHA-512) inputs and produces a 32-byte output.
+    /// </summary>
+    private static void BcryptHash(BlowfishContext state, byte[] ciphertext, uint[] cdata,
+        byte[] sha2pass, byte[] sha2salt, byte[] outs)
+    {
         // Key expansion.
         state.InitState();
         state.ExpandState(sha2salt, Sha512DigestLength, sha2pass, Sha512DigestLength);
@@ -230,9 +240,5 @@ internal static class BcryptPbkdf
         {
             BinaryPrimitives.WriteUInt32LittleEndian(outs.AsSpan(4 * i, 4), cdata[i]);
         }
-
-        // Zap.
-        CryptographicOperations.ZeroMemory(ciphertext);
-        Array.Clear(cdata, 0, cdata.Length);
     }
 }

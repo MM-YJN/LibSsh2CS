@@ -100,6 +100,18 @@ internal sealed class BlowfishContext
         Array.Copy(s_initP, 0, _p, 0, BlfN + 2);
     }
 
+    /// <summary>Clears the expanded key tables after a derivation.</summary>
+    internal void Clear()
+    {
+        foreach (uint[] box in _s)
+        {
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(
+                System.Runtime.InteropServices.MemoryMarshal.AsBytes(box.AsSpan()));
+        }
+        System.Security.Cryptography.CryptographicOperations.ZeroMemory(
+            System.Runtime.InteropServices.MemoryMarshal.AsBytes(_p.AsSpan()));
+    }
+
     /// <summary>
     /// Encipher one 64-bit block. Ported 1:1 from <c>Blowfish_encipher</c>.
     /// Operates on <paramref name="xl"/>/<paramref name="xr"/> by reference.
