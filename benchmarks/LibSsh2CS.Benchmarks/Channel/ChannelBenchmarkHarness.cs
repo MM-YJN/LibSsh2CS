@@ -17,8 +17,8 @@ namespace LibSsh2CS.Benchmarks.Channel;
 /// <remarks>
 /// The pipe pause threshold is parameterized so a producer racing the
 /// benchmarked side stays naturally paced by backpressure; allocations made by
-/// producer/drain tasks on other threads are excluded from BenchmarkDotNet's
-/// per-thread measurement.
+/// background production and asynchronous continuation migration can affect allocation attribution.
+/// Allocation-focused cases prebuffer their inputs and complete synchronously.
 /// </remarks>
 internal sealed class ChannelBenchmarkHarness : IDisposable
 {
@@ -74,7 +74,7 @@ internal sealed class ChannelBenchmarkHarness : IDisposable
     /// window: benchmarks feed the peer's side directly, so no WINDOW_ADJUST
     /// traffic distorts the measured path.
     /// </summary>
-    public SshChannel CreateChannel(uint? localId = null, uint? remoteId = null)
+    public SshChannel CreateChannel(uint? localId = null, uint? remoteId = null, uint outboundWindow = uint.MaxValue / 2)
     {
         uint lid = localId ?? Router.AllocateLocalId();
         uint rid = remoteId ?? lid + 100;
@@ -83,7 +83,7 @@ internal sealed class ChannelBenchmarkHarness : IDisposable
             Router,
             lid,
             rid,
-            outboundWindow: uint.MaxValue / 2,
+            outboundWindow: outboundWindow,
             outboundMaxPacket: ChannelConstants.PacketDefault,
             inboundWindow: uint.MaxValue / 2,
             inboundMaxPacket: ChannelConstants.PacketDefault);

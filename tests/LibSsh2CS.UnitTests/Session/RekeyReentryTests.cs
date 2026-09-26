@@ -50,7 +50,7 @@ public class RekeyReentryTests
         // find nothing (post-fix). Pre-fix it would read the second KEXINIT.
         using var cts2 = new CancellationTokenSource(TimeSpan.FromSeconds(1));
         await Assert.ThrowsAsync<OperationCanceledException>(() =>
-            mock.ServerPacketReader.ReadPacketAsync(cts2.Token));
+            mock.ServerPacketReader.ReadPacketAsync(cts2.Token).AsTask());
 
         // Cleanup: cancel the parked first rekey, then dispose.
         await cts1.CancelAsync();

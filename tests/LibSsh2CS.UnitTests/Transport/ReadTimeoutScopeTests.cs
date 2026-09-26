@@ -33,7 +33,7 @@ public class ReadTimeoutScopeTests
         };
 
         using var cts = new CancellationTokenSource();
-        Task<RawPacket> wait = q.WaitForTypeAsync(PacketType.KexInit, cts.Token);
+        Task<RawPacket> wait = q.WaitForTypeAsync(PacketType.KexInit, cts.Token).AsTask();
 
         // The scope (and its deadline timer) is created before the first read
         // awaits; wait for it so the scope definitely exists.
@@ -65,7 +65,7 @@ public class ReadTimeoutScopeTests
             ReadTimeout = TimeSpan.FromMinutes(5),
         };
 
-        Task<RawPacket> wait = q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken);
+        Task<RawPacket> wait = q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken).AsTask();
         ManualTimer timer = await provider.WaitForTimerAsync(TimeSpan.FromSeconds(5));
 
         timer.Fire();

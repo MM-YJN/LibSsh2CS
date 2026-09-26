@@ -37,7 +37,7 @@ public class ReadTimeoutTests
 
         // The server sends nothing; the wait must time out after 5 s.
         Task<RawPacket> waitTask = session.Queue!.WaitForTypeAsync(
-            PacketType.UserauthSuccess, ct);
+            PacketType.UserauthSuccess, ct).AsTask();
 
         fake.Advance(TimeSpan.FromSeconds(6));
         await Task.Delay(TimeSpan.FromMilliseconds(50), ct);   // let the timer fire
@@ -70,7 +70,7 @@ public class ReadTimeoutTests
         await handshookTask;
 
         Task<RawPacket> waitTask = session.Queue!.WaitForTypeAsync(
-            PacketType.UserauthSuccess, ct);
+            PacketType.UserauthSuccess, ct).AsTask();
 
         // A periodic IGNORE packet every second, then silence — the wait must
         // still time out at 5 s (not survive on restarted clocks).
@@ -109,7 +109,7 @@ public class ReadTimeoutTests
 
         using var cts = new CancellationTokenSource();
         Task<RawPacket> waitTask = session.Queue!.WaitForTypeAsync(
-            PacketType.UserauthSuccess, cts.Token);
+            PacketType.UserauthSuccess, cts.Token).AsTask();
 
         await cts.CancelAsync();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await waitTask);

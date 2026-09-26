@@ -19,6 +19,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+using System.Buffers;
 using System.Globalization;
 using System.Numerics;
 using System.Security.Cryptography;
@@ -290,21 +291,7 @@ internal static class Ed25519
     /// single prefix+message input instead of <c>R ‖ A ‖ M</c>.
     /// </summary>
     private static void HashModL(ReadOnlySpan<byte> prefix, ReadOnlySpan<byte> message, Span<byte> destination)
-    {
-        int len = prefix.Length + message.Length;
-        byte[] buf = new byte[len];
-        prefix.CopyTo(buf);
-        message.CopyTo(buf.AsSpan(prefix.Length));
-
-        try
-        {
-            HashAndReduce(buf, destination);
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(buf);
-        }
-    }
+        => Sha512ModL(prefix, default, message, destination);
 
     /// <summary>
     /// Computes <c>SHA-512(r ‖ a ‖ message)</c> interpreted little-endian and
@@ -314,13 +301,27 @@ internal static class Ed25519
     /// </summary>
     private static void Sha512ModL(ReadOnlySpan<byte> r, ReadOnlySpan<byte> a, ReadOnlySpan<byte> message, Span<byte> destination)
     {
-        int len = r.Length + a.Length + message.Length;
-        byte[] buf = new byte[len];
-        r.CopyTo(buf);
-        a.CopyTo(buf.AsSpan(r.Length));
-        message.CopyTo(buf.AsSpan(r.Length + a.Length));
-
-        HashAndReduce(buf, destination);
+        int len = checked(r.Length + a.Length + message.Length);
+        byte[]? rented = null;
+        Span<byte> buffer = len <= 512
+            ? stackalloc byte[len]
+            : (rented = ArrayPool<byte>.Shared.Rent(len)).AsSpan(0, len);
+        try
+        {
+            r.CopyTo(buffer);
+            a.CopyTo(buffer.Slice(r.Length));
+            message.CopyTo(buffer.Slice(r.Length + a.Length));
+            HashAndReduce(buffer, destination);
+        }
+        finally
+        {
+            // Signing includes the secret nonce prefix. Clear both stack and pooled scratch.
+            CryptographicOperations.ZeroMemory(buffer);
+            if (rented is not null)
+            {
+                ArrayPool<byte>.Shared.Return(rented);
+            }
+        }
     }
 
     private static void HashAndReduce(ReadOnlySpan<byte> input, Span<byte> destination)

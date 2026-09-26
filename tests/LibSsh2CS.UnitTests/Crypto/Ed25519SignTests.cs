@@ -14,7 +14,12 @@ public class Ed25519SignTests
     [Theory]
     [InlineData(0)]
     [InlineData(64)]
+    [InlineData(448)]
+    [InlineData(449)]
+    [InlineData(480)]
+    [InlineData(481)]
     [InlineData(4096)]
+    [InlineData(65536)]
     public void Operations_PreserveInputsAndReturnIndependentResults(int messageLength)
     {
         byte[] seed = Enumerable.Range(0, 32).Select(i => (byte)i).ToArray();
@@ -36,6 +41,11 @@ public class Ed25519SignTests
         Assert.Equal(signatureCopy, signature);
         Assert.NotSame(signature, Ed25519.Sign(seed, message));
         Assert.NotSame(publicKey, Ed25519.GetPublicKey(seed));
+        if (message.Length > 0)
+        {
+            message[^1] ^= 1;
+            Assert.False(Ed25519.Verify(publicKey, message, signature));
+        }
     }
 
     /// <summary>

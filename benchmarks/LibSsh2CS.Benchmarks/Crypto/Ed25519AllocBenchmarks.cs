@@ -19,7 +19,7 @@ namespace LibSsh2CS.Benchmarks.Crypto;
 [BenchmarkCategory("crypto")]
 public class Ed25519AllocBenchmarks
 {
-    [Params(0, 64, 4096)]
+    [Params(0, 64, 448, 449, 480, 481, 4096, 65536)]
     public int MessageLength { get; set; }
 
     private byte[] _seed = null!;

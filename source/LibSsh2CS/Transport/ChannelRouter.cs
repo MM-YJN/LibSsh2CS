@@ -722,10 +722,11 @@ internal sealed class ChannelRouter : IDisposable
     /// registered via <see cref="Register"/>.</param>
     /// <param name="canProceed">Optional condition predicate (evaluated under
     /// the channel's own synchronization) describing the caller-specific state
-    /// it is waiting for — see remarks.</param>
+    /// it is waiting for. The channel is passed explicitly so callers can use
+    /// cached static callbacks — see remarks.</param>
     /// <param name="cancellationToken">Cooperative cancellation.</param>
     internal async Task<bool> WaitForStateChangeAsync(
-        SshChannel channel, Func<bool>? canProceed, CancellationToken cancellationToken)
+        SshChannel channel, Func<SshChannel, bool>? canProceed, CancellationToken cancellationToken)
     {
         // Register the TCS FIRST so no signal from an active pumper can be
         // lost. The original design attempted the pump-lock before
@@ -743,7 +744,7 @@ internal sealed class ChannelRouter : IDisposable
             // FUTURE signal is caught); if satisfied, return without blocking.
             // Without this, e.g. a WriteAsync that observed a zero window
             // could park forever on a signal that already fired.
-            if (canProceed is not null && canProceed())
+            if (canProceed is not null && canProceed(channel))
             {
                 return true;
             }
@@ -767,7 +768,7 @@ internal sealed class ChannelRouter : IDisposable
                     // did, pumping would park us on an EMPTY pipe while
                     // holding the lock — permanently. Re-check first; a
                     // satisfied condition skips the pump entirely.
-                    if (canProceed is null || !canProceed())
+                    if (canProceed is null || !canProceed(channel))
                     {
                         await PumpOneBatchAsync(s_routableTypes, cancellationToken).ConfigureAwait(false);
                     }

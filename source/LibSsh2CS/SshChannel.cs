@@ -1747,7 +1747,7 @@ public sealed class SshChannel : IAsyncDisposable
             {
                 // channel.c:2111-2113 — drain incoming flow (routes DATA /
                 // WINDOW_ADJUST / EOF / CLOSE / REQUEST to this or other channels).
-                await _router.WaitForStateChangeAsync(this, HasStdoutDataOrEof, cancellationToken)
+                await _router.WaitForStateChangeAsync(this, static channel => channel.HasStdoutDataOrEof(), cancellationToken)
                     .ConfigureAwait(false);
                 bytesRead = DrainAndAccountStdout(buffer);
 
@@ -1804,7 +1804,7 @@ public sealed class SshChannel : IAsyncDisposable
         {
             while (!_remoteEof && !_remoteClose)
             {
-                await _router.WaitForStateChangeAsync(this, HasStderrDataOrEof, cancellationToken)
+                await _router.WaitForStateChangeAsync(this, static channel => channel.HasStderrDataOrEof(), cancellationToken)
                     .ConfigureAwait(false);
                 bytesRead = DrainAndAccountStderr(buffer);
                 if (bytesRead > 0)
@@ -2196,7 +2196,7 @@ public sealed class SshChannel : IAsyncDisposable
                 }
 
                 // channel.c:2374-2376 — drain incoming flow.
-                await _router.WaitForStateChangeAsync(this, HasOutboundCredit, cancellationToken)
+                await _router.WaitForStateChangeAsync(this, static channel => channel.HasOutboundCredit(), cancellationToken)
                     .ConfigureAwait(false);
             }
 
@@ -2302,7 +2302,7 @@ public sealed class SshChannel : IAsyncDisposable
             {
                 try
                 {
-                    await _router.WaitForStateChangeAsync(this, IsRemoteCloseSet, CancellationToken.None)
+                    await _router.WaitForStateChangeAsync(this, static channel => channel.IsRemoteCloseSet(), CancellationToken.None)
                         .ConfigureAwait(false);
                 }
                 catch (SshException)
@@ -2411,7 +2411,7 @@ public sealed class SshChannel : IAsyncDisposable
                     "Receiving channel window has been exhausted");
             }
 
-            await _router.WaitForStateChangeAsync(this, IsRemoteEofSet, cancellationToken)
+            await _router.WaitForStateChangeAsync(this, static channel => channel.IsRemoteEofSet(), cancellationToken)
                 .ConfigureAwait(false);
         }
     }
@@ -2442,7 +2442,7 @@ public sealed class SshChannel : IAsyncDisposable
         // channel.c:2774-2783 — while !remote.close, read more packets.
         while (!_remoteClose)
         {
-            await _router.WaitForStateChangeAsync(this, IsRemoteCloseSet, cancellationToken)
+            await _router.WaitForStateChangeAsync(this, static channel => channel.IsRemoteCloseSet(), cancellationToken)
                 .ConfigureAwait(false);
         }
     }
@@ -2489,7 +2489,7 @@ public sealed class SshChannel : IAsyncDisposable
         // that closes without sending exit-status would otherwise hang).
         while (!_exitStatus.HasValue && _exitSignal is null && !_remoteClose)
         {
-            await _router.WaitForStateChangeAsync(this, HasExitInfoOrClosed, cancellationToken)
+            await _router.WaitForStateChangeAsync(this, static channel => channel.HasExitInfoOrClosed(), cancellationToken)
                 .ConfigureAwait(false);
         }
 

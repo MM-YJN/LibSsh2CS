@@ -50,7 +50,7 @@ public class ChannelRequestSerializationTests
         // the replies are fed back-to-back, racing the parked waiters.
         for (int i = 0; i < RequestCount; i++)
         {
-            RawPacket req = await h.ServerReader.ReadPacketAsync(ct).WaitAsync(TimeSpan.FromSeconds(10), ct);
+            RawPacket req = await h.ServerReader.ReadPacketAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(10), ct);
             Assert.Equal(PacketType.ChannelRequest, req.Type);
 
             int replyType = i % 2 == 0 ? PacketType.ChannelSuccess : PacketType.ChannelFailure;

@@ -85,7 +85,7 @@ public class BannerAndDisconnectTests
         // impossible — bytes ≥ chars; use a 200-char ASCII string) still sends.
         await session.DisconnectAsync(SshDisconnectReason.ByApplication, new string('a', 200),
             cancellationToken: ct);
-        _ = await mock.ServerPacketReader!.ReadPacketAsync(ct).WaitAsync(TimeSpan.FromSeconds(10), ct);
+        _ = await mock.ServerPacketReader!.ReadPacketAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(10), ct);
 
         await session.DisposeAsync();
     }

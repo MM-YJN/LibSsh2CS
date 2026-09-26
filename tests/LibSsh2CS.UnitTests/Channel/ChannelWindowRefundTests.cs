@@ -105,7 +105,7 @@ public class ChannelWindowRefundTests
         // WINDOW_ADJUST.
         await h.Router.WaitForStateChangeAsync(ch, null, ct);
 
-        RawPacket adjust = await h.ServerReader.ReadPacketAsync(ct).WaitAsync(TimeSpan.FromSeconds(10), ct);
+        RawPacket adjust = await h.ServerReader.ReadPacketAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(10), ct);
         Assert.Equal(PacketType.ChannelWindowAdjust, adjust.Type);
         uint refunded = BinaryPrimitives.ReadUInt32BigEndian(adjust.Payload.AsSpan(5, 4));
 
@@ -160,7 +160,7 @@ public class ChannelWindowRefundTests
 
         await h.Router.WaitForStateChangeAsync(ch, null, ct);
 
-        RawPacket adjust = await h.ServerReader.ReadPacketAsync(ct).WaitAsync(TimeSpan.FromSeconds(10), ct);
+        RawPacket adjust = await h.ServerReader.ReadPacketAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(10), ct);
         Assert.Equal(PacketType.ChannelWindowAdjust, adjust.Type);
         uint refunded = BinaryPrimitives.ReadUInt32BigEndian(adjust.Payload.AsSpan(5, 4));
 

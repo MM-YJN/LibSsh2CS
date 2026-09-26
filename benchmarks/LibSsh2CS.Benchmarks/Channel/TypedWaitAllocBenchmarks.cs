@@ -6,36 +6,11 @@ using LibSsh2CS.Transport;
 
 namespace LibSsh2CS.Benchmarks.Channel;
 
-/// <summary>
-/// Isolates the per-typed-wait deadline machinery in
-/// <see cref="PacketQueue.WaitForTypesAsync"/>: every call constructs a
-/// <c>ReadTimeoutScope</c>, whose constructor creates a linked
-/// <see cref="CancellationTokenSource"/> plus an <see cref="ITimer"/>. This is
-/// the per-wait cost that the Tier-2 work targets (skip the linked source when
-/// the caller's token cannot cancel; reuse one scope per queue).
-/// </summary>
-/// <remarks>
-/// <para>
-/// <see cref="UseTimeout"/> is the control: <see langword="false"/> disables the
-/// deadline, so the typed wait runs with no scope at all. The difference
-/// between the two columns is the per-wait linked CTS + timer allocation.
-/// <see cref="TokenMode"/> separates the caller-token path: <c>none</c> passes
-/// <see cref="CancellationToken.None"/> (the linked source wraps only the
-/// deadline timer today), <c>cancellable</c> passes a live token (adds a linked
-/// registration).
-/// </para>
-/// <para>
-/// The packet is written into the pipe before the wait begins, so the read
-/// finds it buffered and the whole call completes synchronously on the
-/// benchmark thread — no thread-pool migration, and
-/// <c>TaskCreationOptions</c>-driven continuations cannot skew the per-thread
-/// allocation figure. The timeout is ten minutes so it never fires. The wait
-/// operates directly on the <see cref="PacketQueue"/> (not the router), because
-/// the deadline scope is created by the queue and no routing is needed.
-/// </para>
-/// </remarks>
+/// <summary>Measures single/multiple-type waits against stashed or prebuffered packets.</summary>
+/// <remarks>Timeout cases retain per-wait CTS/timer costs; non-cancellable tokens use a plain CTS.</remarks>
 [MemoryDiagnoser]
 [BenchmarkCategory("typed-wait")]
+[InvocationCount(1)]
 public class TypedWaitAllocBenchmarks
 {
     /// <summary><c>none</c> = CancellationToken.None; <c>cancellable</c> = live token.</summary>
@@ -46,13 +21,19 @@ public class TypedWaitAllocBenchmarks
     [Params(true, false)]
     public bool UseTimeout { get; set; }
 
-    private static readonly int[] s_channelDataTypes = { PacketType.ChannelData };
+    [Params(false, true)]
+    public bool SingleType { get; set; }
+
+    [Params(false, true)]
+    public bool Stashed { get; set; }
+
+    private static readonly int[] s_channelDataTypes = { PacketType.ChannelExtendedData, PacketType.ChannelData };
 
     private ChannelBenchmarkHarness _h = null!;
     private byte[] _wire = null!;
     private CancellationTokenSource _liveCts = null!;
 
-    [GlobalSetup]
+    [IterationSetup]
     public void Setup()
     {
         _h = new ChannelBenchmarkHarness(
@@ -66,23 +47,59 @@ public class TypedWaitAllocBenchmarks
         _wire = ChannelBenchmarkHarness.BuildCleartextPacket(PacketType.ChannelData, body);
 
         _liveCts = new CancellationTokenSource();
+        for (int i = 0; i <= BatchSize; i++)
+        {
+            _h.ServerWriter.WriteAsync(_wire).GetAwaiter().GetResult();
+        }
+        if (Stashed)
+        {
+            _h.ServerWriter.WriteAsync(s_marker).GetAwaiter().GetResult();
+#pragma warning disable IDE0008 // Keep identical benchmark source for Task and ValueTask baselines.
+            var stash = _h.Queue.WaitForTypeAsync(PacketType.ChannelSuccess);
+#pragma warning restore IDE0008
+            if (!stash.IsCompletedSuccessfully)
+            {
+                throw new InvalidOperationException("Expected synchronous stashing.");
+            }
+            _ = stash.GetAwaiter().GetResult();
+        }
+#pragma warning disable IDE0008 // Keep identical benchmark source for Task and ValueTask baselines.
+        var warmup = SingleType
+            ? _h.Queue.WaitForTypeAsync(PacketType.ChannelData)
+            : _h.Queue.WaitForTypesAsync(s_channelDataTypes);
+#pragma warning restore IDE0008
+        if (!warmup.IsCompletedSuccessfully)
+        {
+            throw new InvalidOperationException("Expected a synchronous typed wait.");
+        }
+        _ = warmup.GetAwaiter().GetResult();
     }
 
-    [GlobalCleanup]
+    [IterationCleanup]
     public void Cleanup()
     {
         _liveCts.Dispose();
         _h.Dispose();
     }
 
-    [Benchmark]
+    // Enough calls per iteration to stabilize tiered compilation and sub-microsecond stash timings.
+    // The complete cleartext batch remains below the pipe's 4 MiB backpressure threshold.
+    private const int BatchSize = 16384;
+    private static readonly byte[] s_marker = ChannelBenchmarkHarness.BuildCleartextPacket(
+        PacketType.ChannelSuccess, [(byte)PacketType.ChannelSuccess]);
+
+    [Benchmark(OperationsPerInvoke = BatchSize)]
     public async Task<int> WaitForOnePacket()
     {
-        await _h.ServerWriter.WriteAsync(_wire, CancellationToken.None).ConfigureAwait(false);
-        await _h.ServerWriter.FlushAsync(CancellationToken.None).ConfigureAwait(false);
-
         CancellationToken token = TokenMode == "cancellable" ? _liveCts.Token : CancellationToken.None;
-        RawPacket pkt = await _h.Queue.WaitForTypesAsync(s_channelDataTypes, token).ConfigureAwait(false);
-        return pkt.Payload.Length;
+        int length = 0;
+        for (int i = 0; i < BatchSize; i++)
+        {
+            RawPacket pkt = SingleType
+                ? await _h.Queue.WaitForTypeAsync(PacketType.ChannelData, token).ConfigureAwait(false)
+                : await _h.Queue.WaitForTypesAsync(s_channelDataTypes, token).ConfigureAwait(false);
+            length += pkt.Payload.Length;
+        }
+        return length;
     }
 }

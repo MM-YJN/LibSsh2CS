@@ -833,17 +833,17 @@ public static class SshUserAuth
     /// Builds a minimal USERAUTH_REQUEST: [50] [user] [ssh-connection] [method]
     /// [+ extra]. Mirrors the common header of <c>userauth_list</c>'s packet.
     /// </summary>
-    private static byte[] BuildUserauthRequest(string username, string method, byte[]? extra)
+    internal static byte[] BuildUserauthRequest(string username, string method, byte[]? extra)
     {
-        byte[] user = Encoding.UTF8.GetBytes(username);
-        byte[] methodBytes = Encoding.UTF8.GetBytes(method);
+        int userLength = Encoding.UTF8.GetByteCount(username);
+        int methodBytesLength = Encoding.UTF8.GetByteCount(method);
         int extraLen = extra?.Length ?? 0;
-        byte[] payload = new byte[1 + 4 + user.Length + 4 + ServiceConnection.Length + 4 + methodBytes.Length + extraLen];
+        byte[] payload = new byte[1 + 4 + userLength + 4 + ServiceConnection.Length + 4 + methodBytesLength + extraLen];
         int offset = 0;
         payload[offset++] = (byte)PacketType.UserauthRequest;
-        WriteString(payload, ref offset, user);
-        WriteString(payload, ref offset, Encoding.UTF8.GetBytes(ServiceConnection));
-        WriteString(payload, ref offset, methodBytes);
+        WriteUtf8String(payload, ref offset, username);
+        WriteString(payload, ref offset, "ssh-connection"u8);
+        WriteUtf8String(payload, ref offset, method);
         if (extra is not null)
         {
             Buffer.BlockCopy(extra, 0, payload, offset, extra.Length);
@@ -857,15 +857,14 @@ public static class SshUserAuth
     /// When true: [50] [user] [ssh-connection] [password] [TRUE] [4 + old] [4 + new].
     /// Mirrors <c>userauth.c:306-331</c> (initial) and the change flow at 429-484.
     /// </summary>
-    private static byte[] BuildPasswordRequest(string username, string password, bool change, string? oldPassword)
+    internal static byte[] BuildPasswordRequest(string username, string password, bool change, string? oldPassword)
     {
-        byte[] user = Encoding.UTF8.GetBytes(username);
-        byte[] pw = Encoding.UTF8.GetBytes(password);
-        byte[]? oldPw = oldPassword is null ? null : Encoding.UTF8.GetBytes(oldPassword);
-        int oldLen = oldPw?.Length ?? 0;
+        int userLength = Encoding.UTF8.GetByteCount(username);
+        int pwLength = Encoding.UTF8.GetByteCount(password);
+        int oldLen = oldPassword is null ? 0 : Encoding.UTF8.GetByteCount(oldPassword);
 
-        int len = 1 + 4 + user.Length + 4 + ServiceConnection.Length + 4 + 8 /*"password"*/
-            + 1 /*bool*/ + 4 + pw.Length;
+        int len = 1 + 4 + userLength + 4 + ServiceConnection.Length + 4 + 8 /*"password"*/
+            + 1 /*bool*/ + 4 + pwLength;
         if (change)
         {
             len += 4 + oldLen;
@@ -874,15 +873,15 @@ public static class SshUserAuth
         byte[] payload = new byte[len];
         int offset = 0;
         payload[offset++] = (byte)PacketType.UserauthRequest;
-        WriteString(payload, ref offset, user);
-        WriteString(payload, ref offset, Encoding.UTF8.GetBytes(ServiceConnection));
-        WriteString(payload, ref offset, Encoding.UTF8.GetBytes("password"));
+        WriteUtf8String(payload, ref offset, username);
+        WriteString(payload, ref offset, "ssh-connection"u8);
+        WriteString(payload, ref offset, "password"u8);
         payload[offset++] = (byte)(change ? 1 : 0);
-        if (change && oldPw is not null)
+        if (change && oldPassword is not null)
         {
-            WriteString(payload, ref offset, oldPw);
+            WriteUtf8String(payload, ref offset, oldPassword);
         }
-        WriteString(payload, ref offset, pw);
+        WriteUtf8String(payload, ref offset, password);
         return payload;
     }
 
@@ -892,20 +891,20 @@ public static class SshUserAuth
     /// <c>userauth.c:1629-1640</c>. The bool byte is at a fixed offset the
     /// caller flips to TRUE in-place before signing.
     /// </summary>
-    private static byte[] BuildPublickeyProbe(string username, string algoName, byte[] publicKeyBlob)
+    internal static byte[] BuildPublickeyProbe(string username, string algoName, byte[] publicKeyBlob)
     {
-        byte[] user = Encoding.UTF8.GetBytes(username);
-        byte[] algo = Encoding.UTF8.GetBytes(algoName);
-        int len = 1 + 4 + user.Length + 4 + ServiceConnection.Length + 4 + 9 /*"publickey"*/
-            + 1 /*bool FALSE*/ + 4 + algo.Length + 4 + publicKeyBlob.Length;
+        int userLength = Encoding.UTF8.GetByteCount(username);
+        int algoLength = Encoding.UTF8.GetByteCount(algoName);
+        int len = 1 + 4 + userLength + 4 + ServiceConnection.Length + 4 + 9 /*"publickey"*/
+            + 1 /*bool FALSE*/ + 4 + algoLength + 4 + publicKeyBlob.Length;
         byte[] payload = new byte[len];
         int offset = 0;
         payload[offset++] = (byte)PacketType.UserauthRequest;
-        WriteString(payload, ref offset, user);
-        WriteString(payload, ref offset, Encoding.UTF8.GetBytes(ServiceConnection));
-        WriteString(payload, ref offset, Encoding.UTF8.GetBytes("publickey"));
+        WriteUtf8String(payload, ref offset, username);
+        WriteString(payload, ref offset, "ssh-connection"u8);
+        WriteString(payload, ref offset, "publickey"u8);
         payload[offset++] = 0;   // sig_included = FALSE
-        WriteString(payload, ref offset, algo);
+        WriteUtf8String(payload, ref offset, algoName);
         WriteString(payload, ref offset, publicKeyBlob);
         return payload;
     }
@@ -915,17 +914,17 @@ public static class SshUserAuth
     /// [keyboard-interactive] [string ""] [string ""]. Mirrors
     /// <c>userauth.c:2128-2162</c>.
     /// </summary>
-    private static byte[] BuildKbdIntRequest(string username)
+    internal static byte[] BuildKbdIntRequest(string username)
     {
-        byte[] user = Encoding.UTF8.GetBytes(username);
-        int len = 1 + 4 + user.Length + 4 + ServiceConnection.Length + 4 + 20 /*"keyboard-interactive"*/
+        int userLength = Encoding.UTF8.GetByteCount(username);
+        int len = 1 + 4 + userLength + 4 + ServiceConnection.Length + 4 + 20 /*"keyboard-interactive"*/
             + 4 + 4;   // two empty strings (language, submethods)
         byte[] payload = new byte[len];
         int offset = 0;
         payload[offset++] = (byte)PacketType.UserauthRequest;
-        WriteString(payload, ref offset, user);
-        WriteString(payload, ref offset, Encoding.UTF8.GetBytes(ServiceConnection));
-        WriteString(payload, ref offset, Encoding.UTF8.GetBytes("keyboard-interactive"));
+        WriteUtf8String(payload, ref offset, username);
+        WriteString(payload, ref offset, "ssh-connection"u8);
+        WriteString(payload, ref offset, "keyboard-interactive"u8);
         BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(offset, 4), 0);   // empty language
         offset += 4;
         BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(offset, 4), 0);   // empty submethods
@@ -936,14 +935,12 @@ public static class SshUserAuth
     /// Builds the keyboard-interactive response: [61] [uint32 num-responses]
     /// [ [string response] ]*. Mirrors <c>userauth.c:2255-2296</c>.
     /// </summary>
-    private static byte[] BuildKbdIntResponse(string[] answers)
+    internal static byte[] BuildKbdIntResponse(string[] answers)
     {
-        byte[][] answerBytes = new byte[answers.Length][];
         int totalLen = 1 + 4;
         for (int i = 0; i < answers.Length; i++)
         {
-            answerBytes[i] = Encoding.UTF8.GetBytes(answers[i]);
-            totalLen += 4 + answerBytes[i].Length;
+            totalLen += 4 + Encoding.UTF8.GetByteCount(answers[i]);
         }
 
         byte[] payload = new byte[totalLen];
@@ -951,9 +948,9 @@ public static class SshUserAuth
         payload[offset++] = (byte)PacketType.UserauthInfoResponse;
         BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(offset, 4), answers.Length);
         offset += 4;
-        foreach (byte[] a in answerBytes)
+        foreach (string answer in answers)
         {
-            WriteString(payload, ref offset, a);
+            WriteUtf8String(payload, ref offset, answer);
         }
         return payload;
     }
@@ -963,26 +960,26 @@ public static class SshUserAuth
     /// [hostbased] [string algoName] [string pubKeyBlob] [string hostname]
     /// [string localUsername]. Mirrors <c>userauth.c:1079-1091</c>.
     /// </summary>
-    private static byte[] BuildHostbasedRequest(
+    internal static byte[] BuildHostbasedRequest(
         string username, string algoName, byte[] publicKeyBlob,
         string hostname, string localUsername)
     {
-        byte[] user = Encoding.UTF8.GetBytes(username);
-        byte[] algo = Encoding.UTF8.GetBytes(algoName);
-        byte[] host = Encoding.UTF8.GetBytes(hostname);
-        byte[] localUser = Encoding.UTF8.GetBytes(localUsername);
-        int len = 1 + 4 + user.Length + 4 + ServiceConnection.Length + 4 + 9 /*"hostbased"*/
-            + 4 + algo.Length + 4 + publicKeyBlob.Length + 4 + host.Length + 4 + localUser.Length;
+        int userLength = Encoding.UTF8.GetByteCount(username);
+        int algoLength = Encoding.UTF8.GetByteCount(algoName);
+        int hostLength = Encoding.UTF8.GetByteCount(hostname);
+        int localUserLength = Encoding.UTF8.GetByteCount(localUsername);
+        int len = 1 + 4 + userLength + 4 + ServiceConnection.Length + 4 + 9 /*"hostbased"*/
+            + 4 + algoLength + 4 + publicKeyBlob.Length + 4 + hostLength + 4 + localUserLength;
         byte[] payload = new byte[len];
         int offset = 0;
         payload[offset++] = (byte)PacketType.UserauthRequest;
-        WriteString(payload, ref offset, user);
-        WriteString(payload, ref offset, Encoding.UTF8.GetBytes(ServiceConnection));
-        WriteString(payload, ref offset, Encoding.UTF8.GetBytes("hostbased"));
-        WriteString(payload, ref offset, algo);
+        WriteUtf8String(payload, ref offset, username);
+        WriteString(payload, ref offset, "ssh-connection"u8);
+        WriteString(payload, ref offset, "hostbased"u8);
+        WriteUtf8String(payload, ref offset, algoName);
         WriteString(payload, ref offset, publicKeyBlob);
-        WriteString(payload, ref offset, host);
-        WriteString(payload, ref offset, localUser);
+        WriteUtf8String(payload, ref offset, hostname);
+        WriteUtf8String(payload, ref offset, localUsername);
         return payload;
     }
 
@@ -1015,11 +1012,19 @@ public static class SshUserAuth
     }
 
     /// <summary>Writes an SSH string (BE32 length + UTF-8 bytes) and advances the offset.</summary>
-    private static void WriteString(byte[] buf, ref int offset, byte[] bytes)
+    private static void WriteString(Span<byte> buf, ref int offset, ReadOnlySpan<byte> bytes)
     {
-        BinaryPrimitives.WriteInt32BigEndian(buf.AsSpan(offset, 4), bytes.Length);
+        BinaryPrimitives.WriteInt32BigEndian(buf.Slice(offset, 4), bytes.Length);
         offset += 4;
-        Buffer.BlockCopy(bytes, 0, buf, offset, bytes.Length);
+        bytes.CopyTo(buf.Slice(offset));
         offset += bytes.Length;
+    }
+
+    /// <summary>Encodes directly into the payload using the same UTF-8 fallback as GetBytes(string).</summary>
+    private static void WriteUtf8String(Span<byte> buffer, ref int offset, string value)
+    {
+        int written = Encoding.UTF8.GetBytes(value, buffer.Slice(offset + 4));
+        BinaryPrimitives.WriteInt32BigEndian(buffer.Slice(offset, 4), written);
+        offset += 4 + written;
     }
 }

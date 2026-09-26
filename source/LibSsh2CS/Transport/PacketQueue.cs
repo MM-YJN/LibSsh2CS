@@ -290,7 +290,7 @@ internal sealed class PacketQueue
     /// <param name="type">The <c>SSH_MSG_*</c> type to wait for.</param>
     /// <param name="cancellationToken">Cooperative cancellation; the await
     /// unwinds and the underlying <c>PipeReader.ReadAsync</c> is cancelled.</param>
-    public async Task<RawPacket> WaitForTypeAsync(int type, CancellationToken cancellationToken = default)
+    public async ValueTask<RawPacket> WaitForTypeAsync(int type, CancellationToken cancellationToken = default)
     {
         // Fast path: a previously-stashed packet of this type is available.
         if (TryTakeStashed(type, out RawPacket stashed))
@@ -360,7 +360,7 @@ internal sealed class PacketQueue
     /// </summary>
     /// <param name="types">The <c>SSH_MSG_*</c> types to wait for (any match).</param>
     /// <param name="cancellationToken">Cooperative cancellation.</param>
-    public async Task<RawPacket> WaitForTypesAsync(int[] types, CancellationToken cancellationToken = default)
+    public async ValueTask<RawPacket> WaitForTypesAsync(int[] types, CancellationToken cancellationToken = default)
     {
         // Fast path: check the stash for any of the requested types.
         foreach (int t in types)

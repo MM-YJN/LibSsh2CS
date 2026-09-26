@@ -177,7 +177,7 @@ internal sealed class PacketReader : IAsyncDisposable
     /// the payload (beginning with the <c>SSH_MSG_*</c> type byte). Awaits the
     /// <see cref="PipeReader"/> until a full packet is available.
     /// </summary>
-    public async Task<RawPacket> ReadPacketAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<RawPacket> ReadPacketAsync(CancellationToken cancellationToken = default)
     {
         while (true)
         {

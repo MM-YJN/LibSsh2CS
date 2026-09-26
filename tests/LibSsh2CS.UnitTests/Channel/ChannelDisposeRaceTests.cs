@@ -38,9 +38,9 @@ public class ChannelDisposeRaceTests
 
         // Wait until the first EOF + CLOSE are on the wire (the first disposer
         // is now parked in the peer-close wait).
-        RawPacket eof1 = await h.ServerReader.ReadPacketAsync(ct).WaitAsync(TimeSpan.FromSeconds(10), ct);
+        RawPacket eof1 = await h.ServerReader.ReadPacketAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(10), ct);
         Assert.Equal(PacketType.ChannelEof, eof1.Type);
-        RawPacket close1 = await h.ServerReader.ReadPacketAsync(ct).WaitAsync(TimeSpan.FromSeconds(10), ct);
+        RawPacket close1 = await h.ServerReader.ReadPacketAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(10), ct);
         Assert.Equal(PacketType.ChannelClose, close1.Type);
 
         // Second concurrent disposer: pre-fix it sees _localClose == false
@@ -52,7 +52,7 @@ public class ChannelDisposeRaceTests
         // returns the duplicate EOF.
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
         await Assert.ThrowsAsync<OperationCanceledException>(() =>
-            h.ServerReader.ReadPacketAsync(cts.Token));
+            h.ServerReader.ReadPacketAsync(cts.Token).AsTask());
 
         // Let the disposer(s) finish the handshake: peer CLOSE.
         await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(

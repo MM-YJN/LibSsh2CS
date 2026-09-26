@@ -13,11 +13,8 @@ namespace LibSsh2CS.Benchmarks.Transport;
 /// packets encrypted under the same deterministic keys, so every framing
 /// family is exercised with realistic ciphertext.
 /// </summary>
-/// <remarks>
-/// The producer runs on a separate thread; BenchmarkDotNet measures allocations
-/// on the benchmark thread, so the reader's per-packet allocations (the ones
-/// the hot-path optimization targets) are attributed cleanly.
-/// </remarks>
+/// <remarks>This is an asynchronous throughput control. Use BufferedPacketReadAllocBenchmarks
+/// for deterministic allocation comparisons without background production or continuation migration.</remarks>
 [MemoryDiagnoser]
 [BenchmarkCategory("read")]
 public class PacketReadBenchmarks

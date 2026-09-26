@@ -6,14 +6,7 @@ using LibSsh2CS.Benchmarks.Transport;
 
 namespace LibSsh2CS.Benchmarks.Channel;
 
-/// <summary>
-/// Isolates the outbound channel-data path: <see cref="SshChannel.WriteAsync"/>
-/// builds an intermediate payload array
-/// (<c>SshChannel.BuildChannelDataPayload</c>) which <c>PacketWriter</c> then
-/// copies into its frame scratch. The benchmark quantifies that removable
-/// intermediate copy (the outbound double copy targeted by the Tier-2
-/// allocation work).
-/// </summary>
+/// <summary>Measures channel writes framed directly into the writer's reusable scratch.</summary>
 /// <remarks>
 /// <para>
 /// The client's outbound pipe is drained on the benchmark thread after each

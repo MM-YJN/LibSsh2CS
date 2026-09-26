@@ -13,27 +13,8 @@ namespace LibSsh2CS.Benchmarks.Channel;
 /// <see cref="SshChannel.ReadAsync"/> draining the data into the caller's
 /// buffer.
 /// </summary>
-/// <remarks>
-/// <para>
-/// Each invocation writes one pre-framed cleartext <c>SSH_MSG_CHANNEL_DATA</c>
-/// packet into the client's inbound pipe and then reads <see cref="DataSize"/>
-/// bytes back. Feeding on the benchmark thread keeps the read path synchronous
-/// and deterministic (the packet is always buffered, so pipe completions and
-/// continuations stay on the benchmark thread), which is required for reliable
-/// per-thread allocation attribution. The feed itself is constant and
-/// allocation-light (a pooled pipe segment), so before/after deltas isolate the
-/// receive path.
-/// </para>
-/// <para>
-/// Allocation targets in this path: one payload array per packet
-/// (<c>PacketReader.ExtractPayload</c>, the ownership-contract floor) plus the
-/// second array that <c>SshChannel.DeliverDataPayload</c> allocates to copy the
-/// data body out of that payload. The benchmark exists to quantify the second
-/// copy (and to confirm the floor is unchanged after removing it): the
-/// <c>32700</c> case currently allocates ~64 KB per packet, of which ~32 KB is
-/// the removable copy.
-/// </para>
-/// </remarks>
+/// <remarks>Payload arrays are owned by the channel; its FIFO retains slices without another data copy.
+/// Input is fed on the benchmark thread before reading so the operation completes synchronously.</remarks>
 [MemoryDiagnoser]
 [BenchmarkCategory("channel-read")]
 public class ChannelReadAllocBenchmarks
@@ -41,6 +22,9 @@ public class ChannelReadAllocBenchmarks
     /// <summary>Bytes of channel data per packet.</summary>
     [Params(256, 4096, 32700)]
     public int DataSize { get; set; }
+
+    [Params("stdout", "stderr", "merge")]
+    public string ReadKind { get; set; } = "stdout";
 
     private ChannelBenchmarkHarness _h = null!;
     private SshChannel _channel = null!;
@@ -52,12 +36,28 @@ public class ChannelReadAllocBenchmarks
     {
         _h = new ChannelBenchmarkHarness(pipeMegabytes: 4);
         _channel = _h.CreateChannel();
+        if (ReadKind == "merge")
+        {
+            _channel.SetExtendedDataModeAsync(SshExtendedDataMode.Merge).GetAwaiter().GetResult();
+        }
         _buffer = new byte[DataSize];
 
         byte[] data = DataGenerator.Create(DataShape.Compressible, DataSize);
-        _wire = ChannelBenchmarkHarness.BuildCleartextPacket(
-            PacketType.ChannelData,
-            ChannelBenchmarkHarness.BuildChannelDataPayload(_channel.LocalId, data));
+        byte[] payload = ChannelBenchmarkHarness.BuildChannelDataPayload(_channel.LocalId, data);
+        if (ReadKind != "stdout")
+        {
+            byte[] extended = new byte[payload.Length + 4];
+            payload.AsSpan(0, 5).CopyTo(extended);
+            extended[0] = (byte)PacketType.ChannelExtendedData;
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(extended.AsSpan(5), 1);
+            payload.AsSpan(5).CopyTo(extended.AsSpan(9));
+            payload = extended;
+        }
+        _wire = ChannelBenchmarkHarness.BuildCleartextPacket(payload[0], payload);
+        if (!ReadChannelData().IsCompletedSuccessfully)
+        {
+            throw new InvalidOperationException("Expected a synchronous channel read.");
+        }
     }
 
     [GlobalCleanup]
@@ -72,8 +72,9 @@ public class ChannelReadAllocBenchmarks
         int total = 0;
         while (total < _buffer.Length)
         {
-            total += await _channel.ReadAsync(_buffer.AsMemory(total), CancellationToken.None)
-                .ConfigureAwait(false);
+            total += ReadKind == "stderr"
+                ? await _channel.ReadStderrAsync(_buffer.AsMemory(total)).ConfigureAwait(false)
+                : await _channel.ReadAsync(_buffer.AsMemory(total)).ConfigureAwait(false);
         }
 
         return total;
