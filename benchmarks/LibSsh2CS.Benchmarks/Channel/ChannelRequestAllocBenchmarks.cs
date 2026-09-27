@@ -16,10 +16,11 @@ namespace LibSsh2CS.Benchmarks.Channel;
 [InvocationCount(1)]
 public class ChannelRequestAllocBenchmarks
 {
-    private const int BatchSize = 64;
+    // Amortize iteration overhead and warm tiered code before measuring small requests.
+    private const int BatchSize = 1024;
 
-    [Params("exec-empty", "exec-ascii", "exec-utf8", "exec-long", "shell",
-        "subsystem", "env-empty", "env-ascii", "env-utf8", "pty", "signal", "window-change")]
+    [Params("exec-empty", "exec-ascii", "exec-utf8", "exec-long", "exec-malformed", "shell",
+        "subsystem", "env-empty", "env-ascii", "env-utf8", "env-long", "env-malformed", "pty", "signal", "window-change")]
     public string RequestKind { get; set; } = "exec-ascii";
 
     private ChannelBenchmarkHarness _h = null!;
@@ -34,7 +35,8 @@ public class ChannelRequestAllocBenchmarks
         {
             "exec-empty" or "env-empty" => string.Empty,
             "exec-utf8" or "env-utf8" => "echo 你好 🌍",
-            "exec-long" => new string('x', 4096),
+            "exec-long" or "env-long" => new string('x', 4096),
+            "exec-malformed" or "env-malformed" => "bad" + new string('\ud800', 1),
             _ => "echo hello",
         };
         for (int i = 0; i < BatchSize; i++)
@@ -51,7 +53,13 @@ public class ChannelRequestAllocBenchmarks
     }
 
     [IterationCleanup]
-    public void Cleanup() => _h.Dispose();
+    public void Cleanup()
+    {
+        _h.Dispose();
+        _h.Queue.Reader.DisposeAsync().GetAwaiter().GetResult();
+        _h.ClientWriter.DisposeAsync().GetAwaiter().GetResult();
+        _h.ServerReader.DisposeAsync().GetAwaiter().GetResult();
+    }
 
     [Benchmark(OperationsPerInvoke = BatchSize)]
     public async Task SendRequests()
@@ -60,10 +68,10 @@ public class ChannelRequestAllocBenchmarks
         {
             Task send = RequestKind switch
             {
-                "exec-empty" or "exec-ascii" or "exec-utf8" or "exec-long" => channel.ExecAsync(_text),
+                "exec-empty" or "exec-ascii" or "exec-utf8" or "exec-long" or "exec-malformed" => channel.ExecAsync(_text),
                 "shell" => channel.ShellAsync(),
                 "subsystem" => channel.SubsystemAsync("sftp"),
-                "env-empty" or "env-ascii" or "env-utf8" => channel.SetEnvAsync("LANG", _text),
+                "env-empty" or "env-ascii" or "env-utf8" or "env-long" or "env-malformed" => channel.SetEnvAsync("LANG", _text),
                 "pty" => channel.RequestPtyAsync("xterm-256color", 80, 24),
                 "signal" => channel.SignalAsync(SshSignal.Term),
                 "window-change" => channel.RequestPtyWindowSizeAsync(80, 24),

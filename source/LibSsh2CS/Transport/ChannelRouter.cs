@@ -862,31 +862,25 @@ internal sealed class ChannelRouter : IDisposable
     /// (e.g. <c>[CHANNEL_OPEN_CONFIRMATION, CHANNEL_OPEN_FAILURE]</c>).</param>
     /// <param name="cancellationToken">Cooperative cancellation.</param>
     /// <returns>The matched reply packet.</returns>
-    internal async Task<RawPacket> WaitForReplyAsync(
+    internal ValueTask<RawPacket> WaitForReplyAsync(
+        SshChannel channel, int[] replyTypes, CancellationToken cancellationToken)
+    {
+        // Keep the suspended state machine Task-based: an async ValueTask builder
+        // carries an inline RawPacket result, enlarging every suspended wait.
+        // Replies routed by another pumper need neither a task nor a state machine.
+        return TryTakeMatchingReply(channel.LocalId, replyTypes, out RawPacket pending)
+            ? new ValueTask<RawPacket>(pending)
+            : new ValueTask<RawPacket>(WaitForReplySlowAsync(channel, replyTypes, cancellationToken));
+    }
+
+    private async Task<RawPacket> WaitForReplySlowAsync(
         SshChannel channel, int[] replyTypes, CancellationToken cancellationToken)
     {
         while (true)
         {
-            // Fast path: our reply is already in the slot (the active pumper
-            // stashed it before we got here).
-            if (_pendingReplies.TryRemove(channel.LocalId, out RawPacket pending))
+            if (TryTakeMatchingReply(channel.LocalId, replyTypes, out RawPacket pending))
             {
-                if (Array.IndexOf(replyTypes, pending.Type) >= 0)
-                {
-                    return pending;
-                }
-
-                // Not our type — re-stash and fall through to pump. Never
-                // OVERWRITE — the active pumper may have stashed our correct
-                // reply between the TryRemove above and this re-stash (the
-                // fast path runs outside the pump lock); the indexer would
-                // clobber it and lose the reply permanently (waiter hangs
-                // until ReadTimeout). TryAdd leaves a newer entry in place; we
-                // then loop back to the top and consume it.
-                if (!_pendingReplies.TryAdd(channel.LocalId, pending))
-                {
-                    continue;
-                }
+                return pending;
             }
 
             // Register the TCS BEFORE attempting the pump lock (lost-wakeup
@@ -954,6 +948,27 @@ internal sealed class ChannelRouter : IDisposable
                 }
             }
         }
+    }
+
+    private bool TryTakeMatchingReply(uint localId, int[] replyTypes, out RawPacket reply)
+    {
+        while (_pendingReplies.TryRemove(localId, out reply))
+        {
+            if (Array.IndexOf(replyTypes, reply.Type) >= 0)
+            {
+                return true;
+            }
+
+            // Never overwrite a newer reply routed between removal and re-stash.
+            // If another pumper won the slot, retry and consume its reply instead.
+            if (_pendingReplies.TryAdd(localId, reply))
+            {
+                break;
+            }
+        }
+
+        reply = default;
+        return false;
     }
 
     /// <summary>

@@ -1185,9 +1185,16 @@ public sealed class SshChannel : IAsyncDisposable
         await _requestLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            byte[] payload = BuildProcessStartupPayload(RemoteId, requestBytes, message);
-            await _writer.WritePacketAsync(PacketType.ChannelRequest, payload, cancellationToken)
-                .ConfigureAwait(false);
+            int extraLength = message is null ? 0 : 4 + Encoding.UTF8.GetByteCount(message);
+            await _writer.WriteChannelRequestPacketAsync(RemoteId, requestBytes, wantReply: true,
+                extraLength, message, static (extra, value) =>
+                {
+                    if (value is not null)
+                    {
+                        int offset = 0;
+                        WriteString(extra, ref offset, value, Encoding.UTF8);
+                    }
+                }, cancellationToken).ConfigureAwait(false);
 
             // channel.c:1603-1605 — requirev([SUCCESS, FAILURE]) filtered by the
             // channel id. WaitForReplyAsync routes interleaved channel-async packets
@@ -1207,9 +1214,8 @@ public sealed class SshChannel : IAsyncDisposable
             }
 
             // channel.c:1623-1625 — CHANNEL_FAILURE → CHANNEL_REQUEST_DENIED.
-            // Decode the transmitted bytes to preserve replacement fallback in diagnostics.
-            int messageOffset = 1 + 4 + 4 + requestBytes.Length + 1 + 4;
-            string detail = message is null ? request : $"{request}: {Encoding.UTF8.GetString(payload.AsSpan(messageOffset))}";
+            // Reproduce the transmitted replacement fallback only on the failure path.
+            string detail = message is null ? request : $"{request}: {Encoding.UTF8.GetString(Encoding.UTF8.GetBytes(message))}";
             throw new SshException(SshErrorCode.ChannelRequestDenied,
                 $"Channel {request} request denied by server for: {detail}");
         }
@@ -1217,34 +1223,6 @@ public sealed class SshChannel : IAsyncDisposable
         {
             _requestLock.Release();
         }
-    }
-
-    // ── Process-startup packet builder ─────────────────────────────────────
-
-    /// <summary>
-    /// Builds the <c>SSH_MSG_CHANNEL_REQUEST</c> payload for exec/shell/subsystem
-    /// (<c>channel.c:1563-1569</c>):
-    /// <c>[98][u32 remote.id][string request][0x01 want_reply][u32 message_len? ][message?]</c>.
-    /// When <paramref name="message"/> is <c>null</c> (shell), no length+bytes
-    /// are appended; otherwise (exec/subsystem) the 4-byte length + UTF-8 body
-    /// follow the want_reply byte.
-    /// </summary>
-    private static byte[] BuildProcessStartupPayload(uint remoteId, byte[] request, string? message)
-    {
-        int messageLenField = message is null ? 0 : 4 + Encoding.UTF8.GetByteCount(message);
-        byte[] payload = new byte[1 + 4 + 4 + request.Length + 1 + messageLenField];
-        int o = 0;
-        payload[o++] = (byte)PacketType.ChannelRequest;
-        BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(o, 4), remoteId);
-        o += 4;
-        WriteString(payload, ref o, request);
-        payload[o++] = 0x01;   // want_reply = TRUE (channel.c:1566)
-        if (message is not null)
-        {
-            WriteString(payload, ref o, message, Encoding.UTF8);
-        }
-
-        return payload;
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -1596,12 +1574,6 @@ public sealed class SshChannel : IAsyncDisposable
     // ── Shared CHANNEL_REQUEST send+wait helper ───────────────────────────
 
     /// <summary>
-    /// Writes the type-specific CHANNEL_REQUEST fields (after the want_reply
-    /// byte) into a destination span of exactly the precomputed extra length.
-    /// </summary>
-    private delegate void ExtraWriter<TState>(Span<byte> destination, TState state);
-
-    /// <summary>
     /// Builds and sends a <c>SSH_MSG_CHANNEL_REQUEST</c> with the common
     /// header <c>[98][u32 remote.id][string request_type][bool want_reply]</c>,
     /// then any type-specific extra fields appended by <paramref name="writeExtra"/>.
@@ -1636,7 +1608,7 @@ public sealed class SshChannel : IAsyncDisposable
         bool wantReply,
         int extraLength,
         TState state,
-        ExtraWriter<TState> writeExtra,
+        PacketWriter.ExtraWriter<TState> writeExtra,
         CancellationToken cancellationToken)
     {
         // channel.c:2362-2365 (parity with WriteDataAsync guard) — refuse any
@@ -1656,20 +1628,8 @@ public sealed class SshChannel : IAsyncDisposable
         await _requestLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            // Compute the exact size once and fill a single array; avoids the
-            // List<byte> growth, per-field byte[4] temporaries, and ToArray copy.
-            int total = 1 + 4 + (4 + requestTypeBytes.Length) + 1 + extraLength;
-            byte[] payload = new byte[total];
-            int o = 0;
-            payload[o++] = (byte)PacketType.ChannelRequest;
-            BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(o, 4), RemoteId);
-            o += 4;
-            WriteString(payload, ref o, requestTypeBytes);
-            payload[o++] = wantReply ? (byte)1 : (byte)0;
-            writeExtra(payload.AsSpan(o, extraLength), state);
-
-            await _writer.WritePacketAsync(PacketType.ChannelRequest, payload, cancellationToken)
-                .ConfigureAwait(false);
+            await _writer.WriteChannelRequestPacketAsync(RemoteId, requestTypeBytes,
+                wantReply, extraLength, state, writeExtra, cancellationToken).ConfigureAwait(false);
 
             if (!wantReply)
             {

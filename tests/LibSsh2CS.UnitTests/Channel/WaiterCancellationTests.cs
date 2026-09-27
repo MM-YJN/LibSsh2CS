@@ -72,7 +72,7 @@ public class WaiterCancellationTests
     private static Task Start(ChannelRouter router, SshChannel channel, string kind, CancellationToken token) => kind switch
     {
         "state" => router.WaitForStateChangeAsync(channel, canProceed: null, token),
-        "reply" => router.WaitForReplyAsync(channel, [PacketType.ChannelSuccess], token),
+        "reply" => router.WaitForReplyAsync(channel, [PacketType.ChannelSuccess], token).AsTask(),
         _ => router.SendGlobalRequestAsync("keepalive@libssh2.org", ReadOnlyMemory<byte>.Empty, true, token),
     };
 

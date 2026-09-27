@@ -54,7 +54,7 @@ public class WaiterRegisterAllocBenchmarks
             _parked[i] = WaitKind switch
             {
                 "state" => router.WaitForStateChangeAsync(_channels[i], canProceed: null, token),
-                "reply" => router.WaitForReplyAsync(_channels[i], s_replyTypes, token),
+                "reply" => WaitForReplyAsync(router, _channels[i], token),
                 _ => router.SendGlobalRequestAsync("keepalive@libssh2.org", ReadOnlyMemory<byte>.Empty, true, token),
             };
             if (_parked[i].IsCompleted)
@@ -62,6 +62,11 @@ public class WaiterRegisterAllocBenchmarks
                 throw new InvalidOperationException("Expected a parked waiter.");
             }
         }
+    }
+
+    private static async Task WaitForReplyAsync(ChannelRouter router, SshChannel channel, CancellationToken token)
+    {
+        using RawPacket reply = await router.WaitForReplyAsync(channel, s_replyTypes, token).ConfigureAwait(false);
     }
 
     [IterationCleanup]

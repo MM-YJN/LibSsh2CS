@@ -296,7 +296,7 @@ internal sealed class PacketWriter : IAsyncDisposable
     /// fixed window-adjust body. A value type so the body is passed and
     /// written without boxing, closures, or an intermediate payload array.
     /// </summary>
-    private readonly struct PacketBody
+    private readonly struct PacketBody : IPacketBody
     {
         private enum BodyKind
         {
@@ -380,8 +380,51 @@ internal sealed class PacketWriter : IAsyncDisposable
         }
     }
 
-    private async Task WritePacketCoreAsync(int type, PacketBody body,
-        CancellationToken cancellationToken)
+    // Constrained struct dispatch keeps composed bodies out of interface boxes,
+    // while sharing the same locking, compression, and encryption pipeline.
+    private interface IPacketBody
+    {
+        bool IsPlain { get; }
+        ReadOnlySpan<byte> PayloadSpan { get; }
+        int Length { get; }
+        void Write(Span<byte> destination);
+    }
+
+    /// <summary>Encodes request-specific fields into an exactly sized destination.</summary>
+    internal delegate void ExtraWriter<TState>(Span<byte> destination, TState state);
+
+    /// <summary>
+    /// Frames a channel request under the write lock, without an intermediate payload array.
+    /// State and its referenced data must remain valid until the returned task completes.
+    /// </summary>
+    internal Task WriteChannelRequestPacketAsync<TState>(uint remoteId,
+        ReadOnlyMemory<byte> request, bool wantReply, int extraLength, TState state,
+        ExtraWriter<TState> writeExtra, CancellationToken cancellationToken)
+        => WritePacketCoreAsync(PacketType.ChannelRequest,
+            new ChannelRequestBody<TState>(remoteId, request, wantReply, extraLength, state, writeExtra),
+            cancellationToken);
+
+    private readonly struct ChannelRequestBody<TState>(uint remoteId,
+        ReadOnlyMemory<byte> request, bool wantReply, int extraLength, TState state,
+        ExtraWriter<TState> writeExtra) : IPacketBody
+    {
+        public bool IsPlain => false;
+        public ReadOnlySpan<byte> PayloadSpan => default;
+        public int Length => checked(1 + 4 + 4 + request.Length + 1 + extraLength);
+
+        public void Write(Span<byte> destination)
+        {
+            destination[0] = (byte)PacketType.ChannelRequest;
+            BinaryPrimitives.WriteUInt32BigEndian(destination.Slice(1, 4), remoteId);
+            BinaryPrimitives.WriteInt32BigEndian(destination.Slice(5, 4), request.Length);
+            request.Span.CopyTo(destination.Slice(9));
+            destination[9 + request.Length] = wantReply ? (byte)1 : (byte)0;
+            writeExtra(destination.Slice(10 + request.Length, extraLength), state);
+        }
+    }
+
+    private async Task WritePacketCoreAsync<TBody>(int type, TBody body,
+        CancellationToken cancellationToken) where TBody : struct, IPacketBody
     {
         // Serialize with SetOutboundKeys and any other concurrent WritePacketAsync
         // caller. The lock is held across the entire frame+encrypt+flush+seqno
@@ -416,7 +459,7 @@ internal sealed class PacketWriter : IAsyncDisposable
                 }
                 else
                 {
-                    // The body is composed (channel-data header + data).
+                    // The body is composed (channel data, request, or window adjust).
                     // Compression buffers into its own scratch, so stage the
                     // composed body in a pooled array just for this packet.
                     // The uncompressed path never touches this branch and so

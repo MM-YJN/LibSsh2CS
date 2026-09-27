@@ -46,7 +46,7 @@ public class WaitForReplyRestashTests
             ch,
             [PacketType.ChannelSuccess, PacketType.ChannelFailure],
             TestContext.Current.CancellationToken)
-            .WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
         Assert.Equal(PacketType.ChannelSuccess, got.Type);
     }
@@ -73,9 +73,47 @@ public class WaitForReplyRestashTests
             ch,
             [PacketType.ChannelSuccess, PacketType.ChannelFailure],
             TestContext.Current.CancellationToken)
-            .WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
         Assert.Equal(PacketType.ChannelFailure, got.Type);
+    }
+
+    [Theory]
+    [InlineData(PacketType.ChannelSuccess)]
+    [InlineData(PacketType.ChannelFailure)]
+    public async Task StashedMatchingReply_CompletesSynchronously_AndIsConsumedOnce(int type)
+    {
+        using var h = new ChannelTestHarness();
+        SshChannel channel = h.CreateChannel(localId: 0);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(type, BuildReplyPayload(type, 0)));
+        await h.Router.PumpOneBatchForTestAsync(ct);
+
+        ValueTask<RawPacket> wait = h.Router.WaitForReplyAsync(channel,
+            [PacketType.ChannelSuccess, PacketType.ChannelFailure], ct);
+        Assert.True(wait.IsCompletedSuccessfully);
+        using RawPacket reply = await wait;
+        Assert.Equal(type, reply.Type);
+        Assert.False(h.Router.TryTakePendingReply(channel.LocalId, out _));
+    }
+
+    [Fact]
+    public async Task StashedWrongType_DoesNotSatisfyFastPath_AndLaterMatchingReplySucceeds()
+    {
+        using var h = new ChannelTestHarness();
+        SshChannel channel = h.CreateChannel(localId: 0);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(
+            PacketType.ChannelFailure, BuildReplyPayload(PacketType.ChannelFailure, 0)));
+        await h.Router.PumpOneBatchForTestAsync(ct);
+
+        ValueTask<RawPacket> wait = h.Router.WaitForReplyAsync(channel, [PacketType.ChannelSuccess], ct);
+        Assert.False(wait.IsCompleted);
+        await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(
+            PacketType.ChannelSuccess, BuildReplyPayload(PacketType.ChannelSuccess, 0)));
+        using RawPacket reply = await wait;
+        Assert.Equal(PacketType.ChannelSuccess, reply.Type);
+        Assert.False(h.Router.TryTakePendingReply(channel.LocalId, out _));
     }
 
     private static byte[] BuildReplyPayload(int type, uint recipient)
