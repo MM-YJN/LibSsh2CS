@@ -7,7 +7,7 @@ using LibSsh2CS.Transport;
 namespace LibSsh2CS.Benchmarks.Channel;
 
 /// <summary>Measures single/multiple-type waits against stashed or prebuffered packets.</summary>
-/// <remarks>Timeout cases retain per-wait CTS/timer costs; non-cancellable tokens use a plain CTS.</remarks>
+/// <remarks>Compares deadline-enabled waits with disabled-deadline controls.</remarks>
 [MemoryDiagnoser]
 [BenchmarkCategory("typed-wait")]
 [InvocationCount(1)]
@@ -24,8 +24,8 @@ public class TypedWaitAllocBenchmarks
     [Params(false, true)]
     public bool SingleType { get; set; }
 
-    [Params(false, true)]
-    public bool Stashed { get; set; }
+    [Params("buffered", "stashed", "inline")]
+    public string InputKind { get; set; } = "buffered";
 
     private static readonly int[] s_channelDataTypes = { PacketType.ChannelExtendedData, PacketType.ChannelData };
 
@@ -49,9 +49,13 @@ public class TypedWaitAllocBenchmarks
         _liveCts = new CancellationTokenSource();
         for (int i = 0; i <= BatchSize; i++)
         {
+            if (InputKind == "inline")
+            {
+                _h.ServerWriter.WriteAsync(s_ignore).GetAwaiter().GetResult();
+            }
             _h.ServerWriter.WriteAsync(_wire).GetAwaiter().GetResult();
         }
-        if (Stashed)
+        if (InputKind == "stashed")
         {
             _h.ServerWriter.WriteAsync(s_marker).GetAwaiter().GetResult();
 #pragma warning disable IDE0008 // Keep identical benchmark source for Task and ValueTask baselines.
@@ -61,7 +65,7 @@ public class TypedWaitAllocBenchmarks
             {
                 throw new InvalidOperationException("Expected synchronous stashing.");
             }
-            _ = stash.GetAwaiter().GetResult();
+            stash.GetAwaiter().GetResult().Dispose();
         }
 #pragma warning disable IDE0008 // Keep identical benchmark source for Task and ValueTask baselines.
         var warmup = SingleType
@@ -72,7 +76,7 @@ public class TypedWaitAllocBenchmarks
         {
             throw new InvalidOperationException("Expected a synchronous typed wait.");
         }
-        _ = warmup.GetAwaiter().GetResult();
+        warmup.GetAwaiter().GetResult().Dispose();
     }
 
     [IterationCleanup]
@@ -80,11 +84,15 @@ public class TypedWaitAllocBenchmarks
     {
         _liveCts.Dispose();
         _h.Dispose();
+        _h.Queue.Reader.DisposeAsync().GetAwaiter().GetResult();
+        _h.ClientWriter.DisposeAsync().GetAwaiter().GetResult();
+        _h.ServerReader.DisposeAsync().GetAwaiter().GetResult();
     }
 
     // Enough calls per iteration to stabilize tiered compilation and sub-microsecond stash timings.
     // The complete cleartext batch remains below the pipe's 4 MiB backpressure threshold.
     private const int BatchSize = 16384;
+    private static readonly byte[] s_ignore = ChannelBenchmarkHarness.BuildCleartextPacket(PacketType.Ignore, [(byte)PacketType.Ignore]);
     private static readonly byte[] s_marker = ChannelBenchmarkHarness.BuildCleartextPacket(
         PacketType.ChannelSuccess, [(byte)PacketType.ChannelSuccess]);
 
@@ -95,7 +103,7 @@ public class TypedWaitAllocBenchmarks
         int length = 0;
         for (int i = 0; i < BatchSize; i++)
         {
-            RawPacket pkt = SingleType
+            using RawPacket pkt = SingleType
                 ? await _h.Queue.WaitForTypeAsync(PacketType.ChannelData, token).ConfigureAwait(false)
                 : await _h.Queue.WaitForTypesAsync(s_channelDataTypes, token).ConfigureAwait(false);
             length += pkt.Payload.Length;

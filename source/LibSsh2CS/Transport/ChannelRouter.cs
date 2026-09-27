@@ -387,7 +387,7 @@ internal sealed class ChannelRouter : IDisposable
                     // default/non-cancellable case skips the closure and
                     // registration allocation entirely.
                     using CancellationTokenRegistration registration = cancellationToken.CanBeCanceled
-                        ? cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken))
+                        ? cancellationToken.Register(static (state, token) => ((TaskCompletionSource<RawPacket>)state!).TrySetCanceled(token), tcs)
                         : default;
                     await tcs.Task.ConfigureAwait(false);
                     // Loop back: TCS is now completed; the top-of-loop check
@@ -811,7 +811,7 @@ internal sealed class ChannelRouter : IDisposable
             // default/non-cancellable case skips the closure and registration
             // allocation entirely.
             using CancellationTokenRegistration registration = cancellationToken.CanBeCanceled
-                ? cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken))
+                ? cancellationToken.Register(static (state, token) => ((TaskCompletionSource<bool>)state!).TrySetCanceled(token), tcs)
                 : default;
             await tcs.Task.ConfigureAwait(false);
             return true;
@@ -940,7 +940,7 @@ internal sealed class ChannelRouter : IDisposable
                 // default/non-cancellable case skips the closure and
                 // registration allocation entirely.
                 using CancellationTokenRegistration registration = cancellationToken.CanBeCanceled
-                    ? cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken))
+                    ? cancellationToken.Register(static (state, token) => ((TaskCompletionSource<bool>)state!).TrySetCanceled(token), tcs)
                     : default;
                 await tcs.Task.ConfigureAwait(false);
                 // Loop back: re-check slot. The reply should be in the slot now

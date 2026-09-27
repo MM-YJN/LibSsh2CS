@@ -236,7 +236,8 @@ internal sealed class PacketReader : IAsyncDisposable
     /// <param name="packet">The packet, if one was read.</param>
     /// <param name="isCompleted">Set to <see langword="true"/> if the pipe is
     /// completed (EOF); the caller should treat this as a disconnect.</param>
-    public bool TryReadPacket(out RawPacket packet, out bool isCompleted)
+    /// <param name="cancellationToken">Token reported if the pipe read was cancelled.</param>
+    public bool TryReadPacket(out RawPacket packet, out bool isCompleted, CancellationToken cancellationToken = default)
     {
         packet = default;
         isCompleted = false;
@@ -244,6 +245,12 @@ internal sealed class PacketReader : IAsyncDisposable
         if (!_reader.TryRead(out ReadResult result))
         {
             return false;
+        }
+
+        if (result.IsCanceled)
+        {
+            _reader.AdvanceTo(result.Buffer.Start);
+            throw new OperationCanceledException(cancellationToken);
         }
 
         if (result.IsCompleted && result.Buffer.IsEmpty)

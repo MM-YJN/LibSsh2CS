@@ -6,7 +6,7 @@ namespace LibSsh2CS.UnitTests.Transport;
 
 /// <summary>
 /// Regression tests for read-timeout scoping: the read-deadline timer
-/// callback in <c>PacketQueue.ReadTimeoutScope</c> can call
+/// callback in <c>PacketQueue</c> can call
 /// <see cref="CancellationTokenSource.Cancel"/> on a CTS that was already
 /// disposed by a concurrently-finishing wait, throwing
 /// <see cref="ObjectDisposedException"/> on a threadpool thread (unhandled →
@@ -17,8 +17,10 @@ namespace LibSsh2CS.UnitTests.Transport;
 /// </summary>
 public class ReadTimeoutScopeTests
 {
-    [Fact]
-    public async Task TimerCallback_AfterScopeDisposed_DoesNotThrow()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TimerCallback_AfterScopeDisposed_DoesNotThrow(bool singleType)
     {
         // A manual TimeProvider lets us fire the deadline timer callback
         // AFTER the scope has been disposed — the exact race where the
@@ -33,7 +35,7 @@ public class ReadTimeoutScopeTests
         };
 
         using var cts = new CancellationTokenSource();
-        Task<RawPacket> wait = q.WaitForTypeAsync(PacketType.KexInit, cts.Token).AsTask();
+        Task<RawPacket> wait = (singleType ? q.WaitForTypeAsync(PacketType.KexInit, cts.Token) : q.WaitForTypesAsync([PacketType.KexInit], cts.Token)).AsTask();
 
         // The scope (and its deadline timer) is created before the first read
         // awaits; wait for it so the scope definitely exists.
@@ -51,8 +53,10 @@ public class ReadTimeoutScopeTests
         await pipe.Writer.CompleteAsync();
     }
 
-    [Fact]
-    public async Task TimerCallback_NormalFire_CancelsTheWait()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TimerCallback_NormalFire_CancelsTheWait(bool singleType)
     {
         // Sanity: the deadline callback still works when the scope is alive —
         // firing it must cancel the linked token and time out the wait with
@@ -65,7 +69,9 @@ public class ReadTimeoutScopeTests
             ReadTimeout = TimeSpan.FromMinutes(5),
         };
 
-        Task<RawPacket> wait = q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken).AsTask();
+        Task<RawPacket> wait = (singleType
+            ? q.WaitForTypeAsync(PacketType.KexInit, TestContext.Current.CancellationToken)
+            : q.WaitForTypesAsync([PacketType.KexInit], TestContext.Current.CancellationToken)).AsTask();
         ManualTimer timer = await provider.WaitForTimerAsync(TimeSpan.FromSeconds(5));
 
         timer.Fire();

@@ -39,12 +39,17 @@ public class GlobalRequestWaitAllocBenchmarks
     [Params(true, false)]
     public bool UseTimeout { get; set; }
 
+    [Params("none", "cancellable")]
+    public string TokenMode { get; set; } = "none";
+
+    private CancellationTokenSource _cts = null!;
     private ChannelBenchmarkHarness _h = null!;
     private byte[] _reply = null!;
 
     [GlobalSetup]
     public void Setup()
     {
+        _cts = new CancellationTokenSource();
         _h = new ChannelBenchmarkHarness(
             pipeMegabytes: 4,
             readTimeout: UseTimeout ? TimeSpan.FromMinutes(10) : null);
@@ -54,7 +59,14 @@ public class GlobalRequestWaitAllocBenchmarks
     }
 
     [GlobalCleanup]
-    public void Cleanup() => _h.Dispose();
+    public void Cleanup()
+    {
+        _cts.Dispose();
+        _h.Dispose();
+        _h.Queue.Reader.DisposeAsync().GetAwaiter().GetResult();
+        _h.ClientWriter.DisposeAsync().GetAwaiter().GetResult();
+        _h.ServerReader.DisposeAsync().GetAwaiter().GetResult();
+    }
 
     [Benchmark]
     public async Task<int> RequestReplyRoundTrip()
@@ -64,7 +76,7 @@ public class GlobalRequestWaitAllocBenchmarks
         await _h.ServerWriter.FlushAsync(CancellationToken.None).ConfigureAwait(false);
 
         using RawPacket reply = await _h.Router.SendGlobalRequestAsync(
-            "keepalive@libssh2.org", ReadOnlyMemory<byte>.Empty, wantReply: true, CancellationToken.None)
+            "keepalive@libssh2.org", ReadOnlyMemory<byte>.Empty, wantReply: true, TokenMode == "cancellable" ? _cts.Token : CancellationToken.None)
             .ConfigureAwait(false);
 
         int total = DrainOutbound();

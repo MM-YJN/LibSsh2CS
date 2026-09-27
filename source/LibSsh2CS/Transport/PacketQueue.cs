@@ -226,76 +226,89 @@ internal sealed class PacketQueue : IDisposable
     public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
 
     /// <summary>
-    /// Creates the read-deadline scope for a wait (or returns
-    /// <see langword="null"/> when <see cref="ReadTimeout"/> is disabled).
-    /// The deadline is driven by <see cref="TimeProvider"/> so tests using
-    /// <c>FakeTimeProvider</c> get deterministic timeouts.
+    /// Tracks one whole typed wait without allocating a timer until input must be awaited.
+    /// Inline packets consume the original deadline even when every read is buffered.
     /// </summary>
-    private ReadTimeoutScope? CreateReadTimeoutScope(CancellationToken cancellationToken)
+    private readonly struct ReadDeadline
     {
-        return ReadTimeout <= TimeSpan.Zero
-            ? null
-            : new ReadTimeoutScope(ReadTimeout, TimeProvider, cancellationToken);
+        private readonly TimeSpan _timeout;
+        private readonly TimeProvider _timeProvider;
+        private readonly long _started;
+
+        public ReadDeadline(TimeSpan timeout, TimeProvider timeProvider)
+        {
+            _timeout = timeout;
+            _timeProvider = timeProvider;
+            _started = timeout > TimeSpan.Zero ? timeProvider.GetTimestamp() : 0;
+        }
+
+        public bool IsEnabled => _timeout > TimeSpan.Zero;
+
+        public ValueTask<RawPacket> ReadAsync(PacketReader reader,
+            ref CancellationTokenSource? timeoutSource, ref ITimer? timer, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IsEnabled)
+            {
+                return reader.ReadPacketAsync(cancellationToken);
+            }
+
+            TimeSpan remaining = _timeout - _timeProvider.GetElapsedTime(_started);
+            if (remaining <= TimeSpan.Zero)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                throw CreateTimeoutException();
+            }
+
+            if (timeoutSource is not null)
+            {
+                return reader.ReadPacketAsync(timeoutSource.Token);
+            }
+
+            if (reader.TryReadPacket(out RawPacket packet, out bool isCompleted, cancellationToken))
+            {
+                return new ValueTask<RawPacket>(packet);
+            }
+            if (isCompleted)
+            {
+                throw new SshException(SshErrorCode.SocketDisconnect,
+                    "Pipe completed before a full packet arrived");
+            }
+
+            // Recompute after parsing a partial frame; that work is also part of the deadline.
+            remaining = _timeout - _timeProvider.GetElapsedTime(_started);
+            if (remaining <= TimeSpan.Zero)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                throw CreateTimeoutException();
+            }
+            // Keep ownership in the wait's finally block, including when timer creation fails.
+            // No wrapper object is needed around the source and timer.
+            timeoutSource = cancellationToken.CanBeCanceled
+                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                : new CancellationTokenSource();
+            timer = _timeProvider.CreateTimer(static state => CancelReadTimeout((CancellationTokenSource)state!),
+                timeoutSource, remaining, Timeout.InfiniteTimeSpan);
+            return reader.ReadPacketAsync(timeoutSource.Token);
+        }
+
+        public SshException CreateTimeoutException() => new(SshErrorCode.Timeout,
+            $"Timeout waiting for SSH packet ({_timeout.TotalSeconds:0}s)");
     }
 
     /// <summary>
-    /// A CTS whose token cancels when <see cref="ReadTimeout"/> elapses (or
-    /// when the caller cancels), plus its deadline timer. Disposing the scope
-    /// disposes both the timer and the CTS.
+    /// Each wait owns its timer and source. A callback already dispatched when the wait
+    /// disposes them must neither throw nor affect a subsequent wait.
     /// </summary>
-    /// <remarks>
-    /// The timer is necessarily per-wait: <see cref="ITimer.Change"/> cannot
-    /// change the callback state, so a reused timer whose previous deadline
-    /// callback was already dispatched could cancel the next wait's token.
-    /// The CTS, however, only wraps the caller's token when one can actually
-    /// fire — a non-cancellable token gets a plain source, skipping the linked
-    /// registration the common default-token wait used to allocate.
-    /// </remarks>
-    private sealed class ReadTimeoutScope : IDisposable
+    private static void CancelReadTimeout(CancellationTokenSource source)
     {
-        private readonly CancellationTokenSource _cts;
-        private readonly ITimer? _timer;
-
-        public ReadTimeoutScope(TimeSpan timeout, TimeProvider timeProvider, CancellationToken cancellationToken)
+        try
         {
-            // A non-cancellable token needs no linked registration — the plain
-            // CTS is only fired by the deadline timer.
-            _cts = cancellationToken.CanBeCanceled
-                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
-                : new CancellationTokenSource();
-            _timer = timeProvider.CreateTimer(
-                static s => CancelSafely((CancellationTokenSource)s!),
-                _cts, timeout, Timeout.InfiniteTimeSpan);
+            source.Cancel();
         }
-
-        public CancellationToken Token => _cts.Token;
-
-        public void Dispose()
+        catch (ObjectDisposedException)
         {
-            _timer?.Dispose();
-            _cts.Dispose();
-        }
-
-        /// <summary>
-        /// Cancels the scope's CTS, swallowing the
-        /// <see cref="ObjectDisposedException"/> a deadline callback already
-        /// dispatched to the threadpool hits when the wait completed and
-        /// disposed the scope concurrently (<c>ITimer.Dispose</c> prevents
-        /// future fires but not in-flight callbacks; without the guard the
-        /// exception escapes on a threadpool thread). The C reference
-        /// polls single-threaded with no timer and cannot hit this race; the
-        /// guard keeps the managed-only lifecycle hazard benign.
-        /// </summary>
-        private static void CancelSafely(CancellationTokenSource cts)
-        {
-            try
-            {
-                cts.Cancel();
-            }
-            catch (ObjectDisposedException)
-            {
-                // The wait already completed; the deadline is moot.
-            }
+            // The wait already completed; the deadline is moot.
         }
     }
 
@@ -340,14 +353,15 @@ internal sealed class PacketQueue : IDisposable
 
         // The C's require deadline (packet.c:1510-1526) covers the whole
         // wait, including inline-dispatched packets.
-        using ReadTimeoutScope? timeout = CreateReadTimeoutScope(cancellationToken);
-        CancellationToken waitToken = timeout?.Token ?? cancellationToken;
+        var deadline = new ReadDeadline(ReadTimeout, TimeProvider);
+        CancellationTokenSource? timeoutSource = null;
+        ITimer? timeoutTimer = null;
         try
         {
             while (true)
             {
                 ThrowIfDisposed();
-                RawPacket pkt = await _reader.ReadPacketAsync(waitToken).ConfigureAwait(false);
+                RawPacket pkt = await deadline.ReadAsync(_reader, ref timeoutSource, ref timeoutTimer, cancellationToken).ConfigureAwait(false);
                 CheckReadPacket(pkt);
                 if (pkt.Type == type)
                 {
@@ -381,15 +395,16 @@ internal sealed class PacketQueue : IDisposable
                 AddStash(pkt);
             }
         }
-        catch (OperationCanceledException) when (timeout is not null && !cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (deadline.IsEnabled && !cancellationToken.IsCancellationRequested)
         {
             // Parity packet.c:1520-1526 — LIBSSH2_ERROR_TIMEOUT when the
             // expected packet hasn't arrived within packet_read_timeout.
-            throw new SshException(SshErrorCode.Timeout,
-                $"Timeout waiting for SSH packet ({ReadTimeout.TotalSeconds:0}s)");
+            throw deadline.CreateTimeoutException();
         }
         finally
         {
+            timeoutTimer?.Dispose();
+            timeoutSource?.Dispose();
             ExpectedType = 0;
         }
     }
@@ -427,14 +442,15 @@ internal sealed class PacketQueue : IDisposable
 
         // The C's requirev deadline (packet.c:1633-1642) covers the whole
         // wait, including inline-dispatched packets.
-        using ReadTimeoutScope? timeout = CreateReadTimeoutScope(cancellationToken);
-        CancellationToken waitToken = timeout?.Token ?? cancellationToken;
+        var deadline = new ReadDeadline(ReadTimeout, TimeProvider);
+        CancellationTokenSource? timeoutSource = null;
+        ITimer? timeoutTimer = null;
         try
         {
             while (true)
             {
                 ThrowIfDisposed();
-                RawPacket pkt = await _reader.ReadPacketAsync(waitToken).ConfigureAwait(false);
+                RawPacket pkt = await deadline.ReadAsync(_reader, ref timeoutSource, ref timeoutTimer, cancellationToken).ConfigureAwait(false);
                 CheckReadPacket(pkt);
                 if (Array.IndexOf(types, pkt.Type) >= 0)
                 {
@@ -449,15 +465,16 @@ internal sealed class PacketQueue : IDisposable
                 AddStash(pkt);
             }
         }
-        catch (OperationCanceledException) when (timeout is not null && !cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (deadline.IsEnabled && !cancellationToken.IsCancellationRequested)
         {
             // Parity packet.c:1639-1642 — LIBSSH2_ERROR_TIMEOUT when the
             // expected packet hasn't arrived within packet_read_timeout.
-            throw new SshException(SshErrorCode.Timeout,
-                $"Timeout waiting for SSH packet ({ReadTimeout.TotalSeconds:0}s)");
+            throw deadline.CreateTimeoutException();
         }
         finally
         {
+            timeoutTimer?.Dispose();
+            timeoutSource?.Dispose();
             StrictKex = savedStrict;
         }
     }
@@ -522,7 +539,7 @@ internal sealed class PacketQueue : IDisposable
         while (true)
         {
             ThrowIfDisposed();
-            if (!_reader.TryReadPacket(out RawPacket pkt, out bool isCompleted))
+            if (!_reader.TryReadPacket(out RawPacket pkt, out bool isCompleted, cancellationToken))
             {
                 // No full packet immediately available. Either the pipe is empty
                 // (more data might arrive) or the pipe is completed (EOF, no more
