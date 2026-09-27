@@ -318,7 +318,7 @@ public class PooledPayloadTests
         await h.FeedInboundAsync(Frame(ChannelTestHarness.BuildChannelDataPayload(channel.LocalId, data)));
         await h.Router.PumpOneBatchForTestAsync(Token);
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(Token);
-        Task<int> read = channel.ReadStderrAsync(new byte[20], cancellation.Token);
+        Task<int> read = channel.ReadStderrAsync(new byte[20], cancellation.Token).AsTask();
         await cancellation.CancelAsync();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => read);
         Assert.Equal(1, pool.Outstanding);

@@ -93,7 +93,7 @@ public class ChannelWindowRaceTests
 
         // B's blocked read becomes the active pumper and parks on the pipe.
         byte[] bufB = new byte[8];
-        Task<int> readB = Task.Run(() => chB.ReadAsync(bufB, ct), ct);
+        Task<int> readB = Task.Run(async () => await chB.ReadAsync(bufB, ct), ct);
         await Task.Delay(100, ct);
 
         // A's reader drains on its own task; the pumper routes the batch
@@ -181,7 +181,7 @@ public class ChannelWindowRaceTests
 
         // B's blocked read = the pumper routing adjusts while the writer races.
         byte[] bufB = new byte[8];
-        Task<int> readB = Task.Run(() => chB.ReadAsync(bufB, ct), ct);
+        Task<int> readB = Task.Run(async () => await chB.ReadAsync(bufB, ct), ct);
         await Task.Delay(100, ct);
 
         // The writer on its own task.
@@ -278,7 +278,7 @@ public class ChannelWindowRaceTests
 
         // B's blocked read = the pumper.
         byte[] bufB = new byte[8];
-        Task<int> readB = Task.Run(() => chB.ReadAsync(bufB, ct), ct);
+        Task<int> readB = Task.Run(async () => await chB.ReadAsync(bufB, ct), ct);
         await Task.Delay(100, ct);
 
         // Two concurrent readers on the SAME channel; small buffers force

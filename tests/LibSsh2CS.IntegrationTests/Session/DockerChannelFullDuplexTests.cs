@@ -150,7 +150,7 @@ public sealed class DockerChannelFullDuplexTests : IDisposable
     /// text.
     /// </summary>
     private static async Task<string> DrainStreamAsync(
-        Func<byte[], CancellationToken, Task<int>> read, CancellationToken ct)
+        Func<byte[], CancellationToken, ValueTask<int>> read, CancellationToken ct)
     {
         using var ms = new MemoryStream();
         byte[] buf = new byte[1024];

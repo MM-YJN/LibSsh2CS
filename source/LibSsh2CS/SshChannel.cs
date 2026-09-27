@@ -1641,11 +1641,15 @@ public sealed class SshChannel : IAsyncDisposable
     /// inbound window has dropped below <c>initial*3/4 + buffer.Length</c>, a
     /// <c>SSH_MSG_CHANNEL_WINDOW_ADJUST</c> is sent to refill it (parity
     /// <c>channel.c:2089-2107</c>). Callers never manage the receive window.
+    /// <para>
+    /// Await the returned value once. If a task is required, call <c>AsTask()</c>
+    /// once and use that task.
+    /// </para>
     /// </remarks>
     /// <param name="buffer">Destination buffer.</param>
     /// <param name="cancellationToken">Cooperative cancellation.</param>
     /// <returns>Bytes read (0 only on peer EOF/CLOSE with empty buffer).</returns>
-    public async Task<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    public async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
         // Zero-length read: complete immediately with 0 (.NET Stream contract).
         // The C reference likewise never blocks on an empty buffer
@@ -1700,12 +1704,16 @@ public sealed class SshChannel : IAsyncDisposable
     /// is dropped at delivery by the router). In <see cref="SshExtendedDataMode.Merge"/>
     /// mode, applications typically read via <see cref="ReadAsync"/> instead —
     /// this method still works and drains the stderr buffer exclusively.
+    /// <para>
+    /// Await the returned value once. If a task is required, call <c>AsTask()</c>
+    /// once and use that task.
+    /// </para>
     /// </remarks>
     /// <param name="buffer">Destination buffer.</param>
     /// <param name="cancellationToken">Cooperative cancellation.</param>
     /// <returns>Bytes read (0 only on peer EOF/CLOSE with empty buffer, or in
     /// Ignore mode).</returns>
-    public async Task<int> ReadStderrAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    public async ValueTask<int> ReadStderrAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
         // Ignore mode: stderr is dropped at delivery; never buffered.
         if (_extendedDataMode == SshExtendedDataMode.Ignore)

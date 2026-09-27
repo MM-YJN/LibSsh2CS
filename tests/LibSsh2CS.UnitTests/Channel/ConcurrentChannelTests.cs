@@ -50,8 +50,8 @@ public class ConcurrentChannelTests
 
         // Start both reads concurrently. They race for the pump-lock; one wins
         // and blocks on ReadPacketAsync, the other registers a TCS and waits.
-        Task<int> readA = Task.Run(() => chA.ReadAsync(bufA, cancellationToken));
-        Task<int> readB = Task.Run(() => chB.ReadAsync(bufB, cancellationToken));
+        Task<int> readA = Task.Run(async () => await chA.ReadAsync(bufA, cancellationToken));
+        Task<int> readB = Task.Run(async () => await chB.ReadAsync(bufB, cancellationToken));
 
         // Give both reads a moment to enter their wait state.
         await Task.Yield();
@@ -144,7 +144,7 @@ public class ConcurrentChannelTests
 
         byte[] bufA = new byte[16];
         // Start A's read — it will acquire the pump-lock and block on the pipe.
-        Task<int> readA = Task.Run(() => chA.ReadAsync(bufA, cancellationToken));
+        Task<int> readA = Task.Run(async () => await chA.ReadAsync(bufA, cancellationToken));
         await Task.Yield();
         await Task.Delay(50, cancellationToken);   // Let A enter the blocked read.
 
@@ -229,7 +229,7 @@ public class ConcurrentChannelTests
         SshChannel chB = h.CreateChannel(localId: 1, remoteId: 200);
 
         byte[] bufA = new byte[8];
-        Task<int> readA = Task.Run(() => chA.ReadAsync(bufA, cancellationToken));
+        Task<int> readA = Task.Run(async () => await chA.ReadAsync(bufA, cancellationToken));
         await Task.Yield();
         await Task.Delay(50, cancellationToken);
 
@@ -283,8 +283,8 @@ public class ConcurrentChannelTests
         byte[] bufA = new byte[8];
         byte[] bufB = new byte[8];
 
-        Task<int> readA = Task.Run(() => chA.ReadAsync(bufA, ctsA.Token));
-        Task<int> readB = Task.Run(() => chB.ReadAsync(bufB, cancellationToken));
+        Task<int> readA = Task.Run(async () => await chA.ReadAsync(bufA, ctsA.Token));
+        Task<int> readB = Task.Run(async () => await chB.ReadAsync(bufB, cancellationToken));
 
         await Task.Yield();
         await Task.Delay(50, cancellationToken);
@@ -431,7 +431,7 @@ public class ConcurrentChannelTests
             for (int i = 0; i < 4; i++)
             {
                 int idx = i;
-                tasks.Add(Task.Run(() => channels[idx].ReadAsync(bufs[idx], cts[idx].Token)));
+                tasks.Add(Task.Run(async () => await channels[idx].ReadAsync(bufs[idx], cts[idx].Token)));
             }
 
             await Task.Yield();
@@ -510,7 +510,7 @@ public class ConcurrentChannelTests
         for (int i = 0; i < ChannelCount; i++)
         {
             int idx = i;
-            reads[i] = Task.Run(() => channels[idx].ReadAsync(bufs[idx], cancellationToken));
+            reads[i] = Task.Run(async () => await channels[idx].ReadAsync(bufs[idx], cancellationToken));
         }
 
         // Give all channel tasks time to register their TCSes.
@@ -574,7 +574,7 @@ public class ConcurrentChannelTests
         byte[] buf = new byte[8];
         // Start the read first — it will become the active pumper and block on
         // the pipe. (ReadAsync's blocking path goes through WaitForStateChangeAsync.)
-        Task<int> readTask = Task.Run(() => ch.ReadAsync(buf, cancellationToken));
+        Task<int> readTask = Task.Run(async () => await ch.ReadAsync(buf, cancellationToken));
 
         // Start the write. It tries to send, sees outbound window = 0, and
         // enters its zero-window loop calling WaitForStateChangeAsync(this).
@@ -643,13 +643,13 @@ public class ConcurrentChannelTests
         // starting a read on a different channel first with no data — it
         // becomes the pumper and blocks on the pipe.
         SshChannel chBlocker = h.CreateChannel(localId: 1, remoteId: 200);
-        Task<int> blockRead = Task.Run(() => chBlocker.ReadAsync(new byte[1], cancellationToken));
+        Task<int> blockRead = Task.Run(async () => await chBlocker.ReadAsync(new byte[1], cancellationToken));
         await Task.Yield();
         await Task.Delay(50, cancellationToken);
 
         // ch's read will fail the pump-lock attempt (chBlocker holds it),
         // register a TCS, and await.
-        Task<int> cancelledRead = Task.Run(() => ch.ReadAsync(buf1, cts.Token));
+        Task<int> cancelledRead = Task.Run(async () => await ch.ReadAsync(buf1, cts.Token));
         await Task.Yield();
         await Task.Delay(50, cancellationToken);
 

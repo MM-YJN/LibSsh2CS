@@ -163,6 +163,10 @@ named-pipe agent backend is not implemented.
 
 ## Read command output and send input
 
+`ReadAsync` and `ReadStderrAsync` return `ValueTask<int>`. Await each result once;
+if you need a `Task<int>` (for example, for `Task.WhenAll`), call `.AsTask()` once
+and use the resulting task.
+
 `ReadAsync` reads stdout and `ReadStderrAsync` reads stderr by default. Drain both
 streams while a command runs so buffered output does not exhaust the channel
 window. Alternatively, set `SshExtendedDataMode.Merge` before starting the

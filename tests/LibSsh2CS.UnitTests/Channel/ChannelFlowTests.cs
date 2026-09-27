@@ -66,7 +66,7 @@ public class ChannelFlowTests
         // ── 4. Read (server → client) ──────────────────────────────────────
         byte[] replyBytes = Encoding.UTF8.GetBytes("have-list\n");
         byte[] readBuf = new byte[64];
-        Task<int> readTask = ch.ReadAsync(readBuf, TestContext.Current.CancellationToken);
+        Task<int> readTask = ch.ReadAsync(readBuf, TestContext.Current.CancellationToken).AsTask();
 
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelData,
             ChannelTestHarness.BuildChannelDataPayload(0, replyBytes)));
@@ -134,7 +134,7 @@ public class ChannelFlowTests
 
         // Read on A first — the pump may route B's data into B's buffer en route.
         byte[] buf = new byte[16];
-        Task<int> readA = chA.ReadAsync(buf, TestContext.Current.CancellationToken);
+        Task<int> readA = chA.ReadAsync(buf, TestContext.Current.CancellationToken).AsTask();
 
         await h.FeedInboundAsync(
             ChannelTestHarness.BuildCleartextPacket(PacketType.ChannelData,

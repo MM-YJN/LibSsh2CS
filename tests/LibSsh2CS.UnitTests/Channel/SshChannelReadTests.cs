@@ -108,7 +108,7 @@ public class SshChannelReadTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1);
 
         byte[] buf = new byte[8];
-        Task<int> readTask = ch.ReadAsync(buf, TestContext.Current.CancellationToken);
+        Task<int> readTask = ch.ReadAsync(buf, TestContext.Current.CancellationToken).AsTask();
 
         // Feed data AFTER the read is pending (server-side write on another
         // turn of the event loop).
@@ -186,7 +186,7 @@ public class SshChannelReadTests
         // inboundWindow(4000) < 5000 → adjust. adjustment = 4000 + 2000 - 4000 = 2000.
         // (2000 > MinAdjust=1024, so not floored.)
         byte[] buf = new byte[2000];
-        Task<int> readTask = ch.ReadAsync(buf, TestContext.Current.CancellationToken);
+        Task<int> readTask = ch.ReadAsync(buf, TestContext.Current.CancellationToken).AsTask();
 
         // The router is the queue's sole reader; ReadAsync first calls
         // EnsureInboundWindow which writes a WINDOW_ADJUST to the client's
@@ -223,7 +223,7 @@ public class SshChannelReadTests
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 1, inboundWindow: 1000, inboundMaxPacket: 1000);
 
         byte[] buf = new byte[500];
-        Task<int> readTask = ch.ReadAsync(buf, TestContext.Current.CancellationToken);
+        Task<int> readTask = ch.ReadAsync(buf, TestContext.Current.CancellationToken).AsTask();
 
         using RawPacket adj = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelWindowAdjust, adj.Type);
