@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.IO.Pipelines;
 using System.Security.Cryptography;
+using System.Text;
 
 using LibSsh2CS.Util;
 
@@ -378,6 +379,44 @@ internal sealed class PacketWriter : IAsyncDisposable
             o += 4;
             _payload.Span.CopyTo(destination.Slice(o));
         }
+    }
+
+    /// <summary>Sends a forwarded-channel open confirmation without a temporary payload.</summary>
+    internal Task WriteChannelOpenConfirmationAsync(uint recipient, uint sender, uint window, uint maxPacket,
+        CancellationToken cancellationToken = default)
+        => WritePacketCoreAsync(PacketType.ChannelOpenConfirmation,
+            new OpenConfirmationBody(recipient, sender, window, maxPacket), cancellationToken);
+
+    /// <summary>Sends a forwarded-channel open failure without temporary encoding arrays.</summary>
+    internal Task WriteChannelOpenFailureAsync(uint recipient, int reason, string description, string language = "",
+        CancellationToken cancellationToken = default)
+        => WritePacketCoreAsync(PacketType.ChannelOpenFailure,
+            new OpenFailureBody(recipient, reason, description ?? string.Empty, language ?? string.Empty), cancellationToken);
+
+    private readonly struct OpenConfirmationBody(uint recipient, uint sender, uint window, uint maxPacket) : IPacketBody
+    {
+        public bool IsPlain => false;
+        public ReadOnlySpan<byte> PayloadSpan => default;
+        public int Length => 17;
+
+        public void Write(Span<byte> destination)
+        {
+            destination[0] = (byte)PacketType.ChannelOpenConfirmation;
+            BinaryPrimitives.WriteUInt32BigEndian(destination.Slice(1, 4), recipient);
+            BinaryPrimitives.WriteUInt32BigEndian(destination.Slice(5, 4), sender);
+            BinaryPrimitives.WriteUInt32BigEndian(destination.Slice(9, 4), window);
+            BinaryPrimitives.WriteUInt32BigEndian(destination.Slice(13, 4), maxPacket);
+        }
+    }
+
+    private readonly struct OpenFailureBody(uint recipient, int reason, string description, string language) : IPacketBody
+    {
+        public bool IsPlain => false;
+        public ReadOnlySpan<byte> PayloadSpan => default;
+        public int Length { get; } = checked(17 + Encoding.UTF8.GetByteCount(description) + Encoding.ASCII.GetByteCount(language));
+
+        public void Write(Span<byte> destination)
+            => SshChannel.WriteChannelOpenFailurePayload(destination, recipient, reason, description, language);
     }
 
     /// <summary>Frames a type-only control packet directly under the write lock.</summary>

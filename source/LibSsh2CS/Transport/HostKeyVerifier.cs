@@ -317,53 +317,53 @@ internal static class HostKeyVerifier
     /// Minimal encoding: leading zero bytes stripped; a 0x00 is prepended when the
     /// high bit is set so the INTEGER stays non-negative (X.690 §8.3.2/§8.3.3).
     /// </summary>
-    private static byte[] EncodeEcdsaDerSig(byte[] r, byte[] s)
+    internal static byte[] EncodeEcdsaDerSig(byte[] r, byte[] s)
     {
-        byte[] rDer = EncodeDerInteger(r);
-        byte[] sDer = EncodeDerInteger(s);
-        int seqLen = rDer.Length + sDer.Length;
-        // Encode the SEQUENCE length (DER definite-length form). ECDSA sigs are at
-        // most ~138B (P-521: two 66-byte ints), so seqLen fits in one byte for
-        // P-256/P-384 but needs the 0x81 long form once it exceeds 127.
-        byte[] lenBytes = seqLen <= 0x7F
-            ? new byte[] { (byte)seqLen }
-            : new byte[] { 0x81, (byte)seqLen };
-        byte[] sig = new byte[1 + lenBytes.Length + seqLen];
-        sig[0] = 0x30;  // SEQUENCE
-        lenBytes.CopyTo(sig, 1);
-        int offset = 1 + lenBytes.Length;
-        rDer.CopyTo(sig, offset);
-        sDer.CopyTo(sig, offset + rDer.Length);
+        ReadOnlySpan<byte> rValue = TrimDerInteger(r);
+        ReadOnlySpan<byte> sValue = TrimDerInteger(s);
+        int rLength = rValue.Length + ((rValue[0] & 0x80) != 0 ? 1 : 0);
+        int sLength = sValue.Length + ((sValue[0] & 0x80) != 0 ? 1 : 0);
+        int seqLen = 4 + rLength + sLength;
+        // P-521 needs the one-byte long form; the smaller curves use short form.
+        int headerLength = seqLen <= 0x7F ? 2 : 3;
+        byte[] sig = new byte[headerLength + seqLen];
+        sig[0] = 0x30;
+        if (headerLength == 2)
+        {
+            sig[1] = (byte)seqLen;
+        }
+        else
+        {
+            sig[1] = 0x81;
+            sig[2] = (byte)seqLen;
+        }
+        WriteDerInteger(sig.AsSpan(headerLength), rValue, rLength);
+        WriteDerInteger(sig.AsSpan(headerLength + 2 + rLength), sValue, sLength);
         return sig;
     }
 
-    /// <summary>Encodes a positive integer as a DER INTEGER (tag 0x02).</summary>
-    private static byte[] EncodeDerInteger(byte[] unsignedBE)
+    /// <summary>Strips redundant zeros while retaining the zero integer.</summary>
+    private static ReadOnlySpan<byte> TrimDerInteger(ReadOnlySpan<byte> value)
     {
-        // Strip insignificant leading zero bytes (kept positive regardless).
         int start = 0;
-        while (start < unsignedBE.Length - 1 && unsignedBE[start] == 0)
+        while (start < value.Length - 1 && value[start] == 0)
         {
             start++;
         }
+        return value.Slice(start);
+    }
 
-        int contentLen = unsignedBE.Length - start;
-        bool prependZero = (unsignedBE[start] & 0x80) != 0;
-        int len = contentLen + (prependZero ? 1 : 0);
-
-        // contentLen < 128 always for these curve orders → one-byte length form.
-        byte[] der = new byte[2 + len];
-        der[0] = 0x02;  // INTEGER
-        der[1] = (byte)len;
+    /// <summary>Writes a positive DER INTEGER, including its optional sign guard.</summary>
+    private static void WriteDerInteger(Span<byte> destination, ReadOnlySpan<byte> value, int length)
+    {
+        destination[0] = 0x02;
+        destination[1] = (byte)length;
         int offset = 2;
-        if (prependZero)
+        if (length != value.Length)
         {
-            der[offset] = 0;
-            offset++;
+            destination[offset++] = 0;
         }
-
-        unsignedBE.AsSpan(start, contentLen).CopyTo(der.AsSpan(offset));
-        return der;
+        value.CopyTo(destination.Slice(offset));
     }
 
     /// <summary>

@@ -959,18 +959,23 @@ public sealed class SshChannel : IAsyncDisposable
     internal static byte[] BuildChannelOpenFailurePayload(
         uint recipientChannel, int reason, string description, string lang = "")
     {
-        byte[] descBytes = Encoding.UTF8.GetBytes(description ?? string.Empty);
-        byte[] langBytes = Encoding.ASCII.GetBytes(lang ?? string.Empty);
-        byte[] payload = new byte[1 + 4 + 4 + 4 + descBytes.Length + 4 + langBytes.Length];
-        int o = 0;
-        payload[o++] = (byte)PacketType.ChannelOpenFailure;
-        BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(o, 4), recipientChannel);
-        o += 4;
-        BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(o, 4), reason);
-        o += 4;
-        WriteString(payload, ref o, descBytes);
-        WriteString(payload, ref o, langBytes);
+        description ??= string.Empty;
+        lang ??= string.Empty;
+        byte[] payload = new byte[checked(17 + Encoding.UTF8.GetByteCount(description) + Encoding.ASCII.GetByteCount(lang))];
+        WriteChannelOpenFailurePayload(payload, recipientChannel, reason, description, lang);
         return payload;
+    }
+
+    /// <summary>Writes an open failure into the final payload or transport frame.</summary>
+    internal static void WriteChannelOpenFailurePayload(Span<byte> destination,
+        uint recipientChannel, int reason, string description, string language)
+    {
+        destination[0] = (byte)PacketType.ChannelOpenFailure;
+        BinaryPrimitives.WriteUInt32BigEndian(destination.Slice(1, 4), recipientChannel);
+        BinaryPrimitives.WriteInt32BigEndian(destination.Slice(5, 4), reason);
+        int offset = 9;
+        WriteString(destination, ref offset, description, Encoding.UTF8);
+        WriteString(destination, ref offset, language, Encoding.ASCII);
     }
 
     /// <summary>

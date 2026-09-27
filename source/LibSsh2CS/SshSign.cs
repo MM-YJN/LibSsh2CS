@@ -234,12 +234,12 @@ internal static class SshSign
     /// </summary>
     internal static byte[] BuildSshSigBlob(string algoName, byte[] rawSig)
     {
-        byte[] nameBytes = System.Text.Encoding.UTF8.GetBytes(algoName);
-        byte[] blob = new byte[4 + nameBytes.Length + 4 + rawSig.Length];
-        BinaryPrimitives.WriteInt32BigEndian(blob.AsSpan(0, 4), nameBytes.Length);
-        nameBytes.CopyTo(blob, 4);
-        BinaryPrimitives.WriteInt32BigEndian(blob.AsSpan(4 + nameBytes.Length, 4), rawSig.Length);
-        rawSig.CopyTo(blob, 8 + nameBytes.Length);
+        int nameLength = System.Text.Encoding.UTF8.GetByteCount(algoName);
+        byte[] blob = new byte[checked(8 + nameLength + rawSig.Length)];
+        BinaryPrimitives.WriteInt32BigEndian(blob.AsSpan(0, 4), nameLength);
+        System.Text.Encoding.UTF8.GetBytes(algoName, blob.AsSpan(4, nameLength));
+        BinaryPrimitives.WriteInt32BigEndian(blob.AsSpan(4 + nameLength, 4), rawSig.Length);
+        rawSig.CopyTo(blob, 8 + nameLength);
         return blob;
     }
 

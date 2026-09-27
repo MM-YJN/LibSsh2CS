@@ -569,15 +569,10 @@ internal sealed class ChannelRouter : IDisposable
 
         // packet.c:210-216 — CHANNEL_OPEN_CONFIRMATION:
         // [91][u32 recip=peer's sender][u32 sender=our new localId][u32 window][u32 packet]
-        byte[] confirmation = SshChannel.BuildChannelOpenConfirmationPayload(
-            recipientChannel: senderChannel,
-            senderChannel: localId,
-            window: ChannelConstants.WindowDefault,
-            maxPacket: ChannelConstants.PacketDefault);
-
         try
         {
-            await _writer.WritePacketAsync(PacketType.ChannelOpenConfirmation, confirmation, cancellationToken)
+            await _writer.WriteChannelOpenConfirmationAsync(senderChannel, localId,
+                ChannelConstants.WindowDefault, ChannelConstants.PacketDefault, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (SshException)
@@ -599,18 +594,10 @@ internal sealed class ChannelRouter : IDisposable
         }
     }
 
-    /// <summary>
-    /// Builds + sends a <c>SSH_MSG_CHANNEL_OPEN_FAILURE</c> payload via the
-    /// <see cref="SshChannel.BuildChannelOpenFailurePayload"/> helper.
-    /// </summary>
-    private async Task SendChannelOpenFailureAsync(
+    /// <summary>Sends a forwarded-channel rejection directly through the packet writer.</summary>
+    private Task SendChannelOpenFailureAsync(
         uint recipientChannel, int reason, string description, CancellationToken cancellationToken)
-    {
-        byte[] failure = SshChannel.BuildChannelOpenFailurePayload(
-            recipientChannel, reason, description, lang: string.Empty);
-        await _writer.WritePacketAsync(PacketType.ChannelOpenFailure, failure, cancellationToken)
-            .ConfigureAwait(false);
-    }
+        => _writer.WriteChannelOpenFailureAsync(recipientChannel, reason, description, cancellationToken: cancellationToken);
 
     // ── Registration / id allocation ───────────────────────────────────────
 
