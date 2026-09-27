@@ -36,14 +36,14 @@ internal static class GlobalRequest
     /// <see cref="PacketType.GlobalRequest"/> type byte (80).</returns>
     public static byte[] BuildPayload(string name, ReadOnlyMemory<byte> extra, bool wantReply)
     {
-        byte[] nameBytes = Encoding.ASCII.GetBytes(name);
-        byte[] payload = new byte[1 + 4 + nameBytes.Length + 1 + extra.Length];
+        int nameLength = Encoding.ASCII.GetByteCount(name);
+        byte[] payload = new byte[1 + 4 + nameLength + 1 + extra.Length];
         int o = 0;
         payload[o++] = (byte)PacketType.GlobalRequest;
-        BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(o, 4), nameBytes.Length);
+        BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(o, 4), nameLength);
         o += 4;
-        Buffer.BlockCopy(nameBytes, 0, payload, o, nameBytes.Length);
-        o += nameBytes.Length;
+        Encoding.ASCII.GetBytes(name, payload.AsSpan(o, nameLength));
+        o += nameLength;
         payload[o++] = (byte)(wantReply ? 1 : 0);
         if (!extra.IsEmpty)
         {

@@ -61,6 +61,28 @@ public class WaiterCancellationTests
         await next.WaitAsync(TestContext.Current.CancellationToken);
     }
 
+    [Theory]
+    [InlineData("state")]
+    [InlineData("reply")]
+    public async Task ActivePumperCancellation_HandsOffToParkedWaiter(string kind)
+    {
+        using var h = new ChannelTestHarness();
+        SshChannel activeChannel = h.CreateChannel(localId: 0);
+        SshChannel parkedChannel = h.CreateChannel(localId: 1);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        Task active = Start(h.Router, activeChannel, kind, cts.Token);
+        Assert.False(active.IsCompleted);
+        Task parked = Start(h.Router, parkedChannel, kind, TestContext.Current.CancellationToken);
+        Assert.False(parked.IsCompleted);
+
+        await cts.CancelAsync();
+        // Active reads use the queue's linked deadline token; verify cancellation
+        // and pump handoff rather than the parked-waiter's token identity contract.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => active);
+        await h.FeedInboundAsync(Reply(parkedChannel, kind));
+        await parked.WaitAsync(TestContext.Current.CancellationToken);
+    }
+
     private static void DiscardPendingReply(ChannelRouter router, uint localId)
     {
         if (router.TryTakePendingReply(localId, out RawPacket packet))

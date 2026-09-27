@@ -859,14 +859,14 @@ public sealed class SshChannel : IAsyncDisposable
     /// </summary>
     private static byte[] BuildDirectTcpIpExtra(string host, int port, string shost, int sport)
     {
-        byte[] hostBytes = Encoding.UTF8.GetBytes(host);
-        byte[] shostBytes = Encoding.UTF8.GetBytes(shost);
-        byte[] extra = new byte[4 + hostBytes.Length + 4 + 4 + shostBytes.Length + 4];
+        int hostLength = Encoding.UTF8.GetByteCount(host);
+        int shostLength = Encoding.UTF8.GetByteCount(shost);
+        byte[] extra = new byte[4 + hostLength + 4 + 4 + shostLength + 4];
         int o = 0;
-        WriteString(extra, ref o, hostBytes);
+        WriteString(extra, ref o, host, Encoding.UTF8);
         BinaryPrimitives.WriteInt32BigEndian(extra.AsSpan(o, 4), port);
         o += 4;
-        WriteString(extra, ref o, shostBytes);
+        WriteString(extra, ref o, shost, Encoding.UTF8);
         BinaryPrimitives.WriteInt32BigEndian(extra.AsSpan(o, 4), sport);
         return extra;
     }
@@ -885,12 +885,12 @@ public sealed class SshChannel : IAsyncDisposable
     /// </remarks>
     private static byte[] BuildDirectStreamLocalExtra(string socketPath, string shost, int sport)
     {
-        byte[] pathBytes = Encoding.UTF8.GetBytes(socketPath);
-        byte[] shostBytes = Encoding.UTF8.GetBytes(shost);
-        byte[] extra = new byte[4 + pathBytes.Length + 4 + shostBytes.Length + 4];
+        int pathLength = Encoding.UTF8.GetByteCount(socketPath);
+        int shostLength = Encoding.UTF8.GetByteCount(shost);
+        byte[] extra = new byte[4 + pathLength + 4 + shostLength + 4];
         int o = 0;
-        WriteString(extra, ref o, pathBytes);
-        WriteString(extra, ref o, shostBytes);
+        WriteString(extra, ref o, socketPath, Encoding.UTF8);
+        WriteString(extra, ref o, shost, Encoding.UTF8);
         BinaryPrimitives.WriteInt32BigEndian(extra.AsSpan(o, 4), sport);
         return extra;
     }
@@ -926,11 +926,11 @@ public sealed class SshChannel : IAsyncDisposable
     internal static byte[] BuildChannelOpenPayload(
         string channelType, uint localId, uint window, uint packet, ReadOnlyMemory<byte> extra)
     {
-        byte[] typeBytes = Encoding.ASCII.GetBytes(channelType);
-        byte[] payload = new byte[1 + 4 + typeBytes.Length + 4 + 4 + 4 + extra.Length];
+        int typeLength = Encoding.ASCII.GetByteCount(channelType);
+        byte[] payload = new byte[1 + 4 + typeLength + 4 + 4 + 4 + extra.Length];
         int o = 0;
         payload[o++] = (byte)PacketType.ChannelOpen;
-        WriteString(payload, ref o, typeBytes);
+        WriteString(payload, ref o, channelType, Encoding.ASCII);
         BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(o, 4), localId);
         o += 4;
         BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(o, 4), window);

@@ -47,6 +47,37 @@ public class CooperativePumperTests
         Assert.Equal([0xAA, 0xBB], ch.TryDequeueStdout());
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WaitForStateChange_StateArrivesAfterInitialCheck_DoesNotReadEmptyPipe(bool contended)
+    {
+        using var h = new ChannelTestHarness();
+        SshChannel channel = h.CreateChannel(localId: 0);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task? blocker = contended ? h.Router.PumpOneBatchForTestAsync(ct) : null;
+        int checks = 0;
+
+        // The state becomes ready after the initial check: either while taking
+        // the free lock, or while registering behind another pumper.
+        Task<bool> wait = h.Router.WaitForStateChangeAsync(channel, _ => ++checks > 1, ct);
+        Assert.True(wait.IsCompletedSuccessfully);
+        Assert.True(await wait);
+
+        if (blocker is not null)
+        {
+            await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(PacketType.ChannelWindowAdjust,
+                ChannelTestHarness.BuildWindowAdjustPayload(channel.LocalId, 1)));
+            await blocker.WaitAsync(ct);
+        }
+
+        // A skipped pump must release the lock for subsequent operations.
+        await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(PacketType.ChannelData,
+            ChannelTestHarness.BuildChannelDataPayload(channel.LocalId, [0xAA])));
+        await h.Router.WaitForStateChangeAsync(channel, null, ct);
+        Assert.Equal(new byte[] { 0xAA }, channel.TryDequeueStdout());
+    }
+
     // ── TryTakePendingReply fast path ───────────────────────────────────
 
     /// <summary>

@@ -709,13 +709,12 @@ internal sealed class ChannelRouter : IDisposable
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Cooperative pumper (lost-wakeup prevention).</b> The TCS is registered
-    /// in <see cref="_signals"/> <b>before</b> attempting to acquire
-    /// <see cref="_pumpLock"/>. This closes the lost-wakeup window that existed
-    /// in the original design (where the TCS was registered only after
-    /// the non-blocking lock attempt failed): a pumper routing a packet to this
-    /// channel between the failed lock attempt and the TCS registration would
-    /// have its signal lost, deadlocking the waiter.
+    /// <b>Cooperative pumper (lost-wakeup prevention).</b> First try to acquire
+    /// <see cref="_pumpLock"/> without allocating a waiter. On contention,
+    /// register the TCS in <see cref="_signals"/> <b>before retrying</b> the
+    /// lock, and re-check the requested state. Both steps are required: a
+    /// pumper may route the state or release the lock between the failed first
+    /// attempt and registration, when no waiter exists to receive its signal.
     /// </para>
     /// <para>
     /// After registering, we attempt the pump-lock non-blockingly. If we
@@ -746,46 +745,42 @@ internal sealed class ChannelRouter : IDisposable
     internal async Task<bool> WaitForStateChangeAsync(
         SshChannel channel, Func<SshChannel, bool>? canProceed, CancellationToken cancellationToken)
     {
-        // Register the TCS FIRST so no signal from an active pumper can be
-        // lost. The original design attempted the pump-lock before
-        // registering, which opened a window where a packet routed to this
-        // channel between the failed lock attempt and registration had its
-        // signal fire into an empty slot — the channel's data was buffered but
-        // the waiter hung forever.
-        TaskCompletionSource<bool> tcs = RegisterWaiter(channel.LocalId);
+        if (canProceed is not null && canProceed(channel))
+        {
+            return true;
+        }
+
+        TaskCompletionSource<bool>? tcs = null;
         try
         {
-            // Lost-wakeup rescue 1: the awaited state may have
-            // arrived BETWEEN the caller's last condition check and this
-            // registration — its signal fired into the then-empty slot and is
-            // gone. Re-check the condition now (with the TCS registered, any
-            // FUTURE signal is caught); if satisfied, return without blocking.
-            // Without this, e.g. a WriteAsync that observed a zero window
-            // could park forever on a signal that already fired.
-            if (canProceed is not null && canProceed(channel))
+            // An uncontended pumper needs no signal object. If another pumper
+            // owns the lock, register BEFORE retrying so its release cannot
+            // strand us between the failed first attempt and registration.
+            bool acquired = await _pumpLock.WaitAsync(0, cancellationToken).ConfigureAwait(false);
+            if (!acquired)
             {
-                return true;
+                tcs = RegisterWaiter(channel.LocalId);
+                // State may have arrived before registration, losing its signal.
+                if (canProceed is not null && canProceed(channel))
+                {
+                    return true;
+                }
+
+                acquired = await _pumpLock.WaitAsync(0, cancellationToken).ConfigureAwait(false);
             }
 
-            // Fast path: become the active pumper without blocking. If we can
-            // acquire the pump lock immediately, we route one batch of packets
-            // (which may signal other channels' waiters) and return. The caller
-            // re-checks its own state after we return.
-            if (await _pumpLock.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+            if (acquired)
             {
-                // We're pumping — drop our TCS so it doesn't get signaled (and
-                // so the next wait from this channel gets a fresh slot).
-                RemoveWaiter(channel.LocalId, tcs);
-                tcs = null!;   // Sentinel: don't double-remove in finally.
-
                 try
                 {
-                    // Lost-wakeup rescue 2: the awaited state may
-                    // have arrived while we were acquiring the pump lock (the
-                    // signaling pumper finished its batch in that gap). If it
-                    // did, pumping would park us on an EMPTY pipe while
-                    // holding the lock — permanently. Re-check first; a
-                    // satisfied condition skips the pump entirely.
+                    if (tcs is not null)
+                    {
+                        RemoveWaiter(channel.LocalId, tcs);
+                        tcs = null;
+                    }
+
+                    // State may also have arrived while acquiring the lock.
+                    // Re-check before pumping an otherwise empty pipe.
                     if (canProceed is null || !canProceed(channel))
                     {
                         await PumpOneBatchAsync(s_routableTypes, cancellationToken).ConfigureAwait(false);
@@ -796,32 +791,20 @@ internal sealed class ChannelRouter : IDisposable
                 finally
                 {
                     _pumpLock.Release();
-                    // Signal all waiters so one of them takes over as the next
-                    // pumper. Essential when we're exiting due to cancellation
-                    // — without this, the surviving waiters would strand. In
-                    // the hot path the wakeup is spurious for most (no state
-                    // change), they re-check and re-await.
+                    // Hand off even on cancellation so surviving waiters can pump.
                     SignalAllWaiters();
                 }
             }
 
-            // Another task holds the pump lock. Await our signal — which was
-            // registered BEFORE the lock attempt, so we cannot miss a wakeup.
-            // Only register when the token can actually fire; the
-            // default/non-cancellable case skips the closure and registration
-            // allocation entirely.
+            // The retry failed with our signal already registered.
             using CancellationTokenRegistration registration = cancellationToken.CanBeCanceled
                 ? cancellationToken.Register(static (state, token) => ((TaskCompletionSource<bool>)state!).TrySetCanceled(token), tcs)
                 : default;
-            await tcs.Task.ConfigureAwait(false);
+            await tcs!.Task.ConfigureAwait(false);
             return true;
         }
         finally
         {
-            // Defensive cleanup: if we registered a TCS and didn't drop it
-            // (because we took the await path and were canceled, or the signal
-            // raced with our removal), make sure it's gone so the next wait
-            // from this channel gets a fresh slot.
             if (tcs is not null)
             {
                 RemoveWaiter(channel.LocalId, tcs);
@@ -850,9 +833,9 @@ internal sealed class ChannelRouter : IDisposable
     /// </para>
     /// <para>
     /// <b>Lost-wakeup prevention.</b> Like <see cref="WaitForStateChangeAsync"/>,
-    /// the TCS is registered BEFORE the pump-lock attempt so a pumper routing
-    /// our reply between the failed lock attempt and registration cannot lose
-    /// its signal. The reply ends up in <see cref="_pendingReplies"/>; the top
+    /// an uncontended pumper allocates no TCS. On contention, register BEFORE
+    /// retrying the pump lock and re-check the reply to recover any signal
+    /// lost before registration. The reply ends up in <see cref="_pendingReplies"/>; the top
     /// of the loop re-checks it after each wake.
     /// </para>
     /// </remarks>
@@ -883,30 +866,33 @@ internal sealed class ChannelRouter : IDisposable
                 return pending;
             }
 
-            // Register the TCS BEFORE attempting the pump lock (lost-wakeup
-            // fix — see WaitForStateChangeAsync).
-            TaskCompletionSource<bool> tcs = RegisterWaiter(channel.LocalId);
+            TaskCompletionSource<bool>? tcs = null;
             try
             {
-                // Lost-wakeup rescue: the reply may have been
-                // stashed between the loop-top slot check and this
-                // registration (its signal fired into the then-empty slot).
-                // Re-check with a TYPE-MATCHED predicate (a plain
-                // "slot non-empty" check would busy-spin on a wrong-type
-                // stash); if our reply is there, loop back and consume it.
-                if (HasMatchingReply(channel.LocalId, replyTypes))
+                bool acquired = await _pumpLock.WaitAsync(0, cancellationToken).ConfigureAwait(false);
+                if (!acquired)
                 {
-                    continue;
+                    // Register before retrying the lock, then re-check the
+                    // reply in case its signal preceded registration.
+                    tcs = RegisterWaiter(channel.LocalId);
+                    if (HasMatchingReply(channel.LocalId, replyTypes))
+                    {
+                        continue;
+                    }
+
+                    acquired = await _pumpLock.WaitAsync(0, cancellationToken).ConfigureAwait(false);
                 }
 
-                // Try to become the active pumper.
-                if (await _pumpLock.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+                if (acquired)
                 {
-                    RemoveWaiter(channel.LocalId, tcs);
-                    tcs = null!;
-
                     try
                     {
+                        if (tcs is not null)
+                        {
+                            RemoveWaiter(channel.LocalId, tcs);
+                            tcs = null;
+                        }
+
                         // Lost-wakeup rescue #2: the reply may have arrived
                         // while we were acquiring the lock — re-check before
                         // pumping (an empty pipe would park us holding it).
@@ -929,14 +915,14 @@ internal sealed class ChannelRouter : IDisposable
                 }
 
                 // Someone else is the pumper. Await our signal — which was
-                // registered BEFORE the lock attempt, so we cannot miss it.
+                // registered BEFORE the lock retry, so we cannot miss it.
                 // Only register when the token can actually fire; the
                 // default/non-cancellable case skips the closure and
                 // registration allocation entirely.
                 using CancellationTokenRegistration registration = cancellationToken.CanBeCanceled
                     ? cancellationToken.Register(static (state, token) => ((TaskCompletionSource<bool>)state!).TrySetCanceled(token), tcs)
                     : default;
-                await tcs.Task.ConfigureAwait(false);
+                await tcs!.Task.ConfigureAwait(false);
                 // Loop back: re-check slot. The reply should be in the slot now
                 // (or close to it — loop again if not).
             }
