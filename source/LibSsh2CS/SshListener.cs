@@ -1,6 +1,4 @@
-using System.Buffers.Binary;
 using System.Collections.Concurrent;
-using System.Text;
 
 using LibSsh2CS.Transport;
 
@@ -251,20 +249,12 @@ public sealed class SshListener : IAsyncDisposable
 
         // Send cancel-tcpip-forward (channel.c:743-749). want_reply=0 —
         // fire-and-forget per libssh2. UTF-8 encode (the C sends raw bytes).
-        byte[] hostBytes = Encoding.UTF8.GetBytes(_host);
-        byte[] extra = new byte[4 + hostBytes.Length + 4];
-        int o = 0;
-        BinaryPrimitives.WriteInt32BigEndian(extra.AsSpan(o, 4), hostBytes.Length);
-        o += 4;
-        Buffer.BlockCopy(hostBytes, 0, extra, o, hostBytes.Length);
-        o += hostBytes.Length;
-        BinaryPrimitives.WriteInt32BigEndian(extra.AsSpan(o, 4), _port);
-
         try
         {
-            await _session.SendGlobalRequestAsync(
+            await _session.SendForwardRequestAsync(
                 name: "cancel-tcpip-forward",
-                extra: extra,
+                host: _host,
+                port: _port,
                 wantReply: false,
                 cancellationToken: CancellationToken.None).ConfigureAwait(false);
         }

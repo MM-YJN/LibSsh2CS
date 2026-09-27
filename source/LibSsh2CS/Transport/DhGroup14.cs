@@ -127,22 +127,6 @@ internal sealed class DhGroup14
         // bottom set → odd (BN_rand bottom != 0).
         raw[PrimeByteLength - 1] |= 0x01;
 
-        return FromBigEndian(raw);
-    }
-
-    // Decodes a big-endian unsigned byte string to BigInteger. Reverses to the
-    // little-endian form the constructor expects and appends a zero high byte so
-    // two's-complement decoding stays non-negative (same trick as
-    // Fe25519Ops.FromBytes uses internally).
-    private static BigInteger FromBigEndian(ReadOnlySpan<byte> bigEndian)
-    {
-        byte[] littleEndian = new byte[bigEndian.Length + 1];
-        for (int i = 0; i < bigEndian.Length; i++)
-        {
-            littleEndian[i] = bigEndian[bigEndian.Length - 1 - i];
-        }
-
-        // littleEndian[bigEndian.Length] is already 0 (positive sign byte).
-        return new BigInteger(littleEndian);
+        return Util.Endian.BigIntegerFromBigEndian(raw);
     }
 }

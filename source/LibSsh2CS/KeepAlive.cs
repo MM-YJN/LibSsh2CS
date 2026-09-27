@@ -31,6 +31,8 @@ namespace LibSsh2CS;
 /// </remarks>
 internal static class KeepAlive
 {
+    internal const string RequestName = "keepalive@libssh2.org";
+
     /// <summary>
     /// The keepalive global-request name, verbatim from <c>keepalive.c:75</c>.
     /// 21 ASCII bytes — the <c>0x15</c> length prefix in the wire payload.
@@ -50,16 +52,5 @@ internal static class KeepAlive
     /// <returns>A 27-byte payload beginning with the
     /// <see cref="Transport.PacketType.GlobalRequest"/> type byte (80).</returns>
     public static byte[] BuildPayload(bool wantReply)
-    {
-        byte[] payload = new byte[27];
-        payload[0] = (byte)Transport.PacketType.GlobalRequest;   // 0x50
-        // u32 BE name length = 21 (0x15)
-        payload[1] = 0;
-        payload[2] = 0;
-        payload[3] = 0;
-        payload[4] = 0x15;
-        RequestNameBytes.Span.CopyTo(payload.AsSpan(5, 21));
-        payload[26] = (byte)(wantReply ? 1 : 0);
-        return payload;
-    }
+        => Transport.GlobalRequest.BuildPayload(RequestName, default, wantReply);
 }

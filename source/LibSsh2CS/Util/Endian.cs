@@ -63,57 +63,59 @@ internal static class Endian
     {
         ArgumentNullException.ThrowIfNull(valueBE);
 
-        // Strip leading zeros (a value of 0 encodes as 4 bytes of 0 length).
+        return GetMpintLength(valueBE.AsSpan());
+    }
+
+    internal static ReadOnlySpan<byte> NormalizeMpint(ReadOnlySpan<byte> valueBE)
+    {
+        // Preserve the existing representation: nonempty all-zero input retains one zero.
         int start = 0;
         while (start < valueBE.Length - 1 && valueBE[start] == 0)
         {
             start++;
         }
+        return valueBE[start..];
+    }
 
-        int trimmed = valueBE.Length - start;
-        bool needsSignPrefix = trimmed > 0 && (valueBE[start] & 0x80) != 0;
-        return trimmed + (needsSignPrefix ? 1 : 0);
+    internal static int GetMpintLength(ReadOnlySpan<byte> valueBE)
+    {
+        ReadOnlySpan<byte> value = NormalizeMpint(valueBE);
+        return value.Length + (!value.IsEmpty && (value[0] & 0x80) != 0 ? 1 : 0);
     }
 
     /// <summary>
     /// Writes an SSH mpint (length-prefixed big-endian). Adds a leading zero
     /// byte if the high bit of the first value byte would be set.
     /// </summary>
-    /// <param name="destination">The destination span (must be at least 4 + value length + 1 bytes).</param>
+    /// <param name="destination">The destination span (must hold the length prefix and encoded value).</param>
     /// <param name="valueBE">The integer value as a big-endian byte array.</param>
     /// <returns>The number of bytes written.</returns>
     public static int WriteMpint(Span<byte> destination, byte[] valueBE)
     {
         ArgumentNullException.ThrowIfNull(valueBE);
+        return WriteMpint(destination, valueBE.AsSpan());
+    }
 
-        // Strip leading zeros.
-        int start = 0;
-        while (start < valueBE.Length - 1 && valueBE[start] == 0)
-        {
-            start++;
-        }
-
-        int trimmed = valueBE.Length - start;
-        bool needsSignPrefix = trimmed > 0 && (valueBE[start] & 0x80) != 0;
-        int encodedLength = trimmed + (needsSignPrefix ? 1 : 0);
-
+    internal static int WriteMpint(Span<byte> destination, ReadOnlySpan<byte> valueBE)
+    {
+        ReadOnlySpan<byte> value = NormalizeMpint(valueBE);
+        bool needsSignPrefix = !value.IsEmpty && (value[0] & 0x80) != 0;
+        int encodedLength = value.Length + (needsSignPrefix ? 1 : 0);
         BinaryPrimitives.WriteInt32BigEndian(destination, encodedLength);
         int offset = 4;
-
         if (needsSignPrefix)
         {
             destination[offset++] = 0;
         }
-
-        valueBE.AsSpan(start, trimmed).CopyTo(destination.Slice(offset));
+        value.CopyTo(destination[offset..]);
         return 4 + encodedLength;
     }
 
     /// <summary>
     /// Converts a non-negative <see cref="BigInteger"/> to its minimal
     /// big-endian unsigned byte representation (no leading zeros, no sign
-    /// byte, no length prefix). This is the form <see cref="GetMpintLength"/>
-    /// and <see cref="WriteMpint"/> expect: they add the conditional leading
+    /// byte, no length prefix). This is the form <see cref="GetMpintLength(byte[])"/>
+    /// and <see cref="WriteMpint(Span{byte}, byte[])"/> expect: they add the conditional leading
     /// zero byte (when the high bit is set) and the 4-byte length prefix.
     /// Replaces libssh2's <c>_libssh2_bn_to_bin</c> output. The value 0
     /// returns an empty array (its mpint encoding is <c>00 00 00 00</c>).

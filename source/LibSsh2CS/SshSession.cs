@@ -1043,22 +1043,9 @@ public sealed class SshSession : IAsyncDisposable
         // channel.c:577-582 — tcpip-forward request body. UTF-8 encode (the C
         // sends raw bytes; ASCII would replace non-ASCII bytes with '?' —
         // consistent with the direct-tcpip path).
-        byte[] hostBytes = Encoding.UTF8.GetBytes(host);
-        byte[] extra = new byte[4 + hostBytes.Length + 4];
-        int o = 0;
-        BinaryPrimitives.WriteInt32BigEndian(extra.AsSpan(o, 4), hostBytes.Length);
-        o += 4;
-        Buffer.BlockCopy(hostBytes, 0, extra, o, hostBytes.Length);
-        o += hostBytes.Length;
-        BinaryPrimitives.WriteInt32BigEndian(extra.AsSpan(o, 4), port);
-
-        // want_reply=1 — the reply carries the server-assigned port (when
-        // caller passed 0) or an empty body.
-        RawPacket reply = await SendGlobalRequestAsync(
-            name: "tcpip-forward",
-            extra: extra,
-            wantReply: true,
-            cancellationToken: cancellationToken).ConfigureAwait(false);
+        // want_reply=1 — the reply carries the server-assigned port when port is zero.
+        RawPacket reply = await SendForwardRequestAsync("tcpip-forward", host, port,
+            wantReply: true, cancellationToken).ConfigureAwait(false);
 
         // channel.c:650-656 — if the caller passed port=0 and the reply body
         // has a u32, use that as the bound port.
@@ -1202,8 +1189,8 @@ public sealed class SshSession : IAsyncDisposable
         // under the single-slot global-request semaphore: a server that
         // ignores the request left SendKeepAliveAsync blocked indefinitely
         // and blocked concurrent tcpip-forward/cancel requests.
-        byte[] payload = KeepAlive.BuildPayload(wantReply: _keepaliveWantReply);
-        await _writer!.WritePacketAsync(PacketType.GlobalRequest, payload, cancellationToken)
+        await _writer!.WriteGlobalRequestPacketAsync(KeepAlive.RequestName, _keepaliveWantReply,
+            0, 0, static (_, _) => { }, cancellationToken)
             .ConfigureAwait(false);
 
         // keepalive.c:91 — update last_sent AFTER a successful send.
@@ -1238,6 +1225,19 @@ public sealed class SshSession : IAsyncDisposable
         }
 
         return _channelRouter.SendGlobalRequestAsync(name, extra, wantReply, cancellationToken);
+    }
+
+    internal Task<RawPacket> SendForwardRequestAsync(string name, string host, int port,
+        bool wantReply, CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(IsDisposed, this);
+        if (_channelRouter is null)
+        {
+            throw new InvalidOperationException(
+                "SshSession must complete HandshakeAsync before sending a global request.");
+        }
+        return _channelRouter.SendGlobalRequestAsync(name, GlobalRequest.GetForwardExtraLength(host),
+            (host, port), GlobalRequest.WriteForwardExtra, wantReply, cancellationToken);
     }
 
     // ── Disconnect ───────────────────────────────────────────────────────────

@@ -38,18 +38,28 @@ internal static class GlobalRequest
     {
         int nameLength = Encoding.ASCII.GetByteCount(name);
         byte[] payload = new byte[1 + 4 + nameLength + 1 + extra.Length];
-        int o = 0;
-        payload[o++] = (byte)PacketType.GlobalRequest;
-        BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(o, 4), nameLength);
-        o += 4;
-        Encoding.ASCII.GetBytes(name, payload.AsSpan(o, nameLength));
-        o += nameLength;
-        payload[o++] = (byte)(wantReply ? 1 : 0);
-        if (!extra.IsEmpty)
-        {
-            extra.Span.CopyTo(payload.AsSpan(o, extra.Length));
-        }
-
+        int offset = WriteHeader(payload, name, wantReply);
+        extra.Span.CopyTo(payload.AsSpan(offset));
         return payload;
+    }
+
+    internal static int WriteHeader(Span<byte> destination, string name, bool wantReply)
+    {
+        int nameLength = Encoding.ASCII.GetByteCount(name);
+        destination[0] = (byte)PacketType.GlobalRequest;
+        BinaryPrimitives.WriteInt32BigEndian(destination.Slice(1, 4), nameLength);
+        Encoding.ASCII.GetBytes(name, destination.Slice(5, nameLength));
+        destination[5 + nameLength] = wantReply ? (byte)1 : (byte)0;
+        return 6 + nameLength;
+    }
+
+    internal static int GetForwardExtraLength(string host) => checked(8 + Encoding.UTF8.GetByteCount(host));
+
+    internal static void WriteForwardExtra(Span<byte> destination, (string Host, int Port) state)
+    {
+        int hostLength = Encoding.UTF8.GetByteCount(state.Host);
+        BinaryPrimitives.WriteInt32BigEndian(destination, hostLength);
+        Encoding.UTF8.GetBytes(state.Host, destination.Slice(4, hostLength));
+        BinaryPrimitives.WriteInt32BigEndian(destination.Slice(4 + hostLength, 4), state.Port);
     }
 }

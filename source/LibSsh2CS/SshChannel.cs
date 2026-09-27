@@ -697,7 +697,9 @@ public sealed class SshChannel : IAsyncDisposable
         PacketWriter writer, ChannelRouter router, CancellationToken cancellationToken)
         => OpenChannelAsync(
             channelType: "session",
-            extra: default,
+            extraLength: 0,
+            state: 0,
+            writeExtra: static (_, _) => { },
             writer: writer,
             router: router,
             cancellationToken: cancellationToken);
@@ -737,10 +739,19 @@ public sealed class SshChannel : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(originatorAddress);
 
-        byte[] extra = BuildDirectTcpIpExtra(host, port, originatorAddress, originatorPort);
         return OpenChannelAsync(
             channelType: "direct-tcpip",
-            extra: extra,
+            extraLength: checked(16 + Encoding.UTF8.GetByteCount(host) + Encoding.UTF8.GetByteCount(originatorAddress)),
+            state: (Host: host, Port: port, Originator: originatorAddress, OriginatorPort: originatorPort),
+            writeExtra: static (destination, state) =>
+            {
+                int offset = 0;
+                WriteString(destination, ref offset, state.Host, Encoding.UTF8);
+                BinaryPrimitives.WriteInt32BigEndian(destination.Slice(offset, 4), state.Port);
+                offset += 4;
+                WriteString(destination, ref offset, state.Originator, Encoding.UTF8);
+                BinaryPrimitives.WriteInt32BigEndian(destination.Slice(offset, 4), state.OriginatorPort);
+            },
             writer: writer,
             router: router,
             cancellationToken: cancellationToken);
@@ -775,10 +786,17 @@ public sealed class SshChannel : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(socketPath);
         ArgumentNullException.ThrowIfNull(originatorAddress);
 
-        byte[] extra = BuildDirectStreamLocalExtra(socketPath, originatorAddress, originatorPort);
         return OpenChannelAsync(
             channelType: "direct-streamlocal@openssh.com",
-            extra: extra,
+            extraLength: checked(12 + Encoding.UTF8.GetByteCount(socketPath) + Encoding.UTF8.GetByteCount(originatorAddress)),
+            state: (Path: socketPath, Originator: originatorAddress, OriginatorPort: originatorPort),
+            writeExtra: static (destination, state) =>
+            {
+                int offset = 0;
+                WriteString(destination, ref offset, state.Path, Encoding.UTF8);
+                WriteString(destination, ref offset, state.Originator, Encoding.UTF8);
+                BinaryPrimitives.WriteInt32BigEndian(destination.Slice(offset, 4), state.OriginatorPort);
+            },
             writer: writer,
             router: router,
             cancellationToken: cancellationToken);
@@ -790,8 +808,8 @@ public sealed class SshChannel : IAsyncDisposable
     /// reply, parse the CONFIRMATION (or throw on FAILURE). Shared by
     /// <see cref="OpenAsync"/> and the direct-tcpip / direct-streamlocal factories.
     /// </summary>
-    private static async Task<SshChannel> OpenChannelAsync(
-        string channelType, ReadOnlyMemory<byte> extra,
+    private static async Task<SshChannel> OpenChannelAsync<TState>(
+        string channelType, int extraLength, TState state, PacketWriter.ExtraWriter<TState> writeExtra,
         PacketWriter writer, ChannelRouter router, CancellationToken cancellationToken)
     {
         uint localId = router.AllocateLocalId();
@@ -806,15 +824,11 @@ public sealed class SshChannel : IAsyncDisposable
         // any early channel packet routes to this channel.
         router.Register(channel);
 
-        byte[] payload = BuildChannelOpenPayload(
-            channelType: channelType,
-            localId: localId,
-            window: ChannelConstants.WindowDefault,
-            packet: ChannelConstants.PacketDefault,
-            extra: extra);
         try
         {
-            await writer.WritePacketAsync(PacketType.ChannelOpen, payload, cancellationToken)
+            await writer.WriteChannelOpenPacketAsync(channelType, localId,
+                ChannelConstants.WindowDefault, ChannelConstants.PacketDefault,
+                extraLength, state, writeExtra, cancellationToken)
                 .ConfigureAwait(false);
 
             // Use the cooperative-pumper WaitForReplyAsync (filters
@@ -852,49 +866,6 @@ public sealed class SshChannel : IAsyncDisposable
         }
     }
 
-    /// <summary>
-    /// Builds the <c>direct-tcpip</c> extra-data block appended after the
-    /// standard CHANNEL_OPEN header. Parity with <c>channel.c:407-410</c>:
-    /// <c>[string host][u32 port][string shost][u32 sport]</c>.
-    /// </summary>
-    private static byte[] BuildDirectTcpIpExtra(string host, int port, string shost, int sport)
-    {
-        int hostLength = Encoding.UTF8.GetByteCount(host);
-        int shostLength = Encoding.UTF8.GetByteCount(shost);
-        byte[] extra = new byte[4 + hostLength + 4 + 4 + shostLength + 4];
-        int o = 0;
-        WriteString(extra, ref o, host, Encoding.UTF8);
-        BinaryPrimitives.WriteInt32BigEndian(extra.AsSpan(o, 4), port);
-        o += 4;
-        WriteString(extra, ref o, shost, Encoding.UTF8);
-        BinaryPrimitives.WriteInt32BigEndian(extra.AsSpan(o, 4), sport);
-        return extra;
-    }
-
-    /// <summary>
-    /// Builds the <c>direct-streamlocal@openssh.com</c> extra-data block
-    /// appended after the standard CHANNEL_OPEN header. Parity with
-    /// <c>channel.c:486-488</c>:
-    /// <c>[string socket_path][string shost][u32 sport]</c>.
-    /// </summary>
-    /// <remarks>
-    /// Unlike direct-tcpip, there is NO port field after <c>socket_path</c>
-    /// — the OpenSSH streamlocal extension drops it (a UNIX socket path is
-    /// sufficient). This divergence from <c>channel_direct_tcpip</c> is the
-    /// only wire-format difference between the two factories.
-    /// </remarks>
-    private static byte[] BuildDirectStreamLocalExtra(string socketPath, string shost, int sport)
-    {
-        int pathLength = Encoding.UTF8.GetByteCount(socketPath);
-        int shostLength = Encoding.UTF8.GetByteCount(shost);
-        byte[] extra = new byte[4 + pathLength + 4 + shostLength + 4];
-        int o = 0;
-        WriteString(extra, ref o, socketPath, Encoding.UTF8);
-        WriteString(extra, ref o, shost, Encoding.UTF8);
-        BinaryPrimitives.WriteInt32BigEndian(extra.AsSpan(o, 4), sport);
-        return extra;
-    }
-
     // ── Open packet builders / parsers ─────────────────────────────────────
 
     /// <summary>
@@ -912,9 +883,9 @@ public sealed class SshChannel : IAsyncDisposable
     /// </code>
     /// </summary>
     /// <remarks>
-    /// Used by <see cref="OpenAsync"/> (channel type "session"), by
-    /// direct-tcpip / direct-streamlocal factories, and (read-only, on the
-    /// parsing side) by server-initiated channel-open dispatch.
+    /// Produces an independently owned payload for wire-format tests and callers
+    /// that need a materialized packet. Production opens use the same header
+    /// encoder through <see cref="PacketWriter"/> without allocating this array.
     /// </remarks>
     /// <param name="channelType">ASCII channel type (e.g. <c>"session"</c>,
     /// <c>"direct-tcpip"</c>, <c>"direct-streamlocal@openssh.com"</c>).</param>
@@ -928,21 +899,23 @@ public sealed class SshChannel : IAsyncDisposable
     {
         int typeLength = Encoding.ASCII.GetByteCount(channelType);
         byte[] payload = new byte[1 + 4 + typeLength + 4 + 4 + 4 + extra.Length];
-        int o = 0;
-        payload[o++] = (byte)PacketType.ChannelOpen;
-        WriteString(payload, ref o, channelType, Encoding.ASCII);
-        BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(o, 4), localId);
-        o += 4;
-        BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(o, 4), window);
-        o += 4;
-        BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(o, 4), packet);
-        o += 4;
-        if (!extra.IsEmpty)
-        {
-            extra.Span.CopyTo(payload.AsSpan(o, extra.Length));
-        }
-
+        int offset = WriteChannelOpenHeader(payload, channelType, localId, window, packet);
+        extra.Span.CopyTo(payload.AsSpan(offset));
         return payload;
+    }
+
+    internal static int WriteChannelOpenHeader(Span<byte> destination,
+        string channelType, uint localId, uint window, uint packet)
+    {
+        int offset = 0;
+        destination[offset++] = (byte)PacketType.ChannelOpen;
+        WriteString(destination, ref offset, channelType, Encoding.ASCII);
+        BinaryPrimitives.WriteUInt32BigEndian(destination.Slice(offset, 4), localId);
+        offset += 4;
+        BinaryPrimitives.WriteUInt32BigEndian(destination.Slice(offset, 4), window);
+        offset += 4;
+        BinaryPrimitives.WriteUInt32BigEndian(destination.Slice(offset, 4), packet);
+        return offset + 4;
     }
 
     /// <summary>

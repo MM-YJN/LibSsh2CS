@@ -448,6 +448,48 @@ internal sealed class PacketWriter : IAsyncDisposable
         }
     }
 
+    /// <summary>Frames a channel open without materializing its payload or extra fields.</summary>
+    internal Task WriteChannelOpenPacketAsync<TState>(string channelType, uint localId,
+        uint window, uint packet, int extraLength, TState state, ExtraWriter<TState> writeExtra,
+        CancellationToken cancellationToken = default)
+        => WritePacketCoreAsync(PacketType.ChannelOpen,
+            new ChannelOpenBody<TState>(channelType, localId, window, packet, extraLength, state, writeExtra),
+            cancellationToken);
+
+    private readonly struct ChannelOpenBody<TState>(string channelType, uint localId,
+        uint window, uint packet, int extraLength, TState state, ExtraWriter<TState> writeExtra) : IPacketBody
+    {
+        public bool IsPlain => false;
+        public ReadOnlySpan<byte> PayloadSpan => default;
+        public int Length => checked(17 + System.Text.Encoding.ASCII.GetByteCount(channelType) + extraLength);
+
+        public void Write(Span<byte> destination)
+        {
+            int offset = SshChannel.WriteChannelOpenHeader(destination, channelType, localId, window, packet);
+            writeExtra(destination.Slice(offset, extraLength), state);
+        }
+    }
+
+    /// <summary>Frames a global request. State must remain valid until the send completes.</summary>
+    internal Task WriteGlobalRequestPacketAsync<TState>(string name, bool wantReply,
+        int extraLength, TState state, ExtraWriter<TState> writeExtra, CancellationToken cancellationToken = default)
+        => WritePacketCoreAsync(PacketType.GlobalRequest,
+            new GlobalRequestBody<TState>(name, wantReply, extraLength, state, writeExtra), cancellationToken);
+
+    private readonly struct GlobalRequestBody<TState>(string name, bool wantReply,
+        int extraLength, TState state, ExtraWriter<TState> writeExtra) : IPacketBody
+    {
+        public bool IsPlain => false;
+        public ReadOnlySpan<byte> PayloadSpan => default;
+        public int Length => checked(6 + System.Text.Encoding.ASCII.GetByteCount(name) + extraLength);
+
+        public void Write(Span<byte> destination)
+        {
+            int offset = GlobalRequest.WriteHeader(destination, name, wantReply);
+            writeExtra(destination.Slice(offset, extraLength), state);
+        }
+    }
+
     private async Task WritePacketCoreAsync<TBody>(int type, TBody body,
         CancellationToken cancellationToken) where TBody : struct, IPacketBody
     {

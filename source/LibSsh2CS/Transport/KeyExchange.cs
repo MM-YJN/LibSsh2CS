@@ -641,14 +641,17 @@ internal static class KeyExchange
 
     /// <summary>
     /// Appends an SSH mpint (BE32 length + value) to the hash. Delegates the
-    /// leading-zero rule to the tested <see cref="Endian.WriteMpint"/>.
+    /// leading-zero rule to the shared mpint normalization helper.
     /// </summary>
     private static void HashMpint(IncrementalHash h, ReadOnlySpan<byte> bigEndian)
     {
-        byte[] be = bigEndian.ToArray();
-        byte[] buf = new byte[4 + Endian.GetMpintLength(be)];
-        Endian.WriteMpint(buf, be);
-        h.AppendData(buf);
+        ReadOnlySpan<byte> value = Endian.NormalizeMpint(bigEndian);
+        bool needsSignPrefix = !value.IsEmpty && (value[0] & 0x80) != 0;
+        Span<byte> prefix = stackalloc byte[5];
+        BinaryPrimitives.WriteInt32BigEndian(prefix, value.Length + (needsSignPrefix ? 1 : 0));
+        prefix[4] = 0;
+        h.AppendData(prefix[..(needsSignPrefix ? 5 : 4)]);
+        h.AppendData(value);
     }
 
     /// <summary>

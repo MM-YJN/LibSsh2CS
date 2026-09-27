@@ -317,8 +317,14 @@ internal sealed class ChannelRouter : IDisposable
     /// <see cref="SshErrorCode.RequestDenied"/> when the server returns
     /// <c>REQUEST_FAILURE</c> (82). Transport errors from the underlying
     /// <see cref="PacketWriter"/> propagate as-is.</exception>
-    internal async Task<RawPacket> SendGlobalRequestAsync(
+    internal Task<RawPacket> SendGlobalRequestAsync(
         string name, ReadOnlyMemory<byte> extra, bool wantReply, CancellationToken cancellationToken)
+        => SendGlobalRequestAsync(name, extra.Length, extra,
+            static (destination, state) => state.Span.CopyTo(destination), wantReply, cancellationToken);
+
+    internal async Task<RawPacket> SendGlobalRequestAsync<TState>(
+        string name, int extraLength, TState state, PacketWriter.ExtraWriter<TState> writeExtra,
+        bool wantReply, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(name);
 
@@ -329,8 +335,7 @@ internal sealed class ChannelRouter : IDisposable
         await _globalReplyLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            byte[] payload = GlobalRequest.BuildPayload(name, extra, wantReply);
-            await _writer.WritePacketAsync(PacketType.GlobalRequest, payload, cancellationToken)
+            await _writer.WriteGlobalRequestPacketAsync(name, wantReply, extraLength, state, writeExtra, cancellationToken)
                 .ConfigureAwait(false);
 
             if (!wantReply)

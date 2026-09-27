@@ -58,6 +58,31 @@ public class ForwardingEncodingTests
         }
     }
 
+    [Theory]
+    [InlineData("empty")]
+    [InlineData("ascii")]
+    [InlineData("unicode")]
+    [InlineData("fallback")]
+    [InlineData("long")]
+    public async Task RemoteForward_EncodesHostDirectly_ForSetupAndCancellation(string kind)
+    {
+        string host = GetText(kind);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        using var h = new ChannelTestHarness();
+        await using var session = new SshSession();
+        session.SetChannelRouterForTest(h.Router);
+        Task<SshListener> listening = session.ListenForwardAsync(host, 443, cancellationToken: ct);
+        using RawPacket request = await h.ServerReader.ReadPacketAsync(ct);
+        Assert.Equal(Packet(80, Encoding.UTF8, "tcpip-forward", (byte)1, host, 443u), request.Payload.ToArray());
+        await h.FeedInboundAsync(ChannelTestHarness.BuildCleartextPacket(PacketType.RequestSuccess, [(byte)PacketType.RequestSuccess]));
+        SshListener listener = await listening;
+        await listener.DisposeAsync();
+        using RawPacket cancel = await h.ServerReader.ReadPacketAsync(ct);
+        Assert.Equal(Packet(80, Encoding.UTF8, "cancel-tcpip-forward", (byte)0, host, 443u), cancel.Payload.ToArray());
+        await h.ClientWriter.DisposeAsync();
+        await h.ServerReader.DisposeAsync();
+    }
+
     // Construct invalid UTF-16 at runtime so test discovery cannot normalize it.
     private static string GetText(string kind) => kind switch
     {
