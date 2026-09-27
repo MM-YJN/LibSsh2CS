@@ -1,3 +1,6 @@
+using System.Buffers.Binary;
+using System.Text;
+
 using LibSsh2CS.Transport;
 
 namespace LibSsh2CS.UnitTests.Transport;
@@ -26,6 +29,45 @@ public class KexInitTests
         Array.Clear(padded);
         Assert.Equal(cookie, parsed.Cookie);
         Assert.Contains(KeyExchange.ExtInfoC, parsed.KexAlgorithms);
+    }
+
+    [Theory]
+    [InlineData(",,alpha,,beta,alpha,,")]
+    [InlineData(",,,")]
+    [InlineData("ext-info-c,kex-strict-c-v00@openssh.com,algorithm")]
+    [InlineData("é,鍵,😀")]
+    public void Build_MatchesReferenceEncoding_ForCustomNameLists(string csv)
+    {
+        SshMethodType[] types = [SshMethodType.Kex, SshMethodType.HostKey,
+            SshMethodType.CryptCs, SshMethodType.CryptSc, SshMethodType.MacCs,
+            SshMethodType.MacSc, SshMethodType.CompCs, SshMethodType.CompSc,
+            SshMethodType.LangCs, SshMethodType.LangSc];
+        var prefs = new MethodPreferences();
+        foreach (SshMethodType type in types)
+        {
+            prefs[type] = csv;
+        }
+        byte[] actual = KeyExchange.BuildKexInit(prefs);
+        using var reference = new MemoryStream();
+        reference.WriteByte((byte)PacketType.KexInit);
+        reference.Write(actual.AsSpan(1, 16)); // cookie is intentionally random
+        string names = string.Join(',', csv.Split(',', StringSplitOptions.RemoveEmptyEntries));
+        Span<byte> length = stackalloc byte[4];
+        foreach (SshMethodType type in types)
+        {
+            string list = type == SshMethodType.Kex
+                ? "ext-info-c,kex-strict-c-v00@openssh.com" + (names.Length == 0 ? "" : "," + names)
+                : names;
+            byte[] bytes = Encoding.UTF8.GetBytes(list);
+            BinaryPrimitives.WriteInt32BigEndian(length, bytes.Length);
+            reference.Write(length);
+            reference.Write(bytes);
+        }
+        reference.Write(new byte[5]); // first_kex_packet_follows and reserved
+        Assert.Equal(reference.ToArray(), actual);
+        byte[] second = KeyExchange.BuildKexInit(prefs);
+        Assert.NotSame(actual, second);
+        Assert.Equal(actual.AsSpan(17).ToArray(), second.AsSpan(17).ToArray());
     }
 
     // ── Build → Parse round-trip ───────────────────────────────────────

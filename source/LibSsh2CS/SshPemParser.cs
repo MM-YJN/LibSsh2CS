@@ -856,11 +856,13 @@ public static class SshPemParser
     /// </summary>
     private static byte[] BuildSshEcdsaPublicBlob(string curveName, byte[] point)
     {
-        using var ms = new MemoryStream(128);
-        WriteSshString(ms, Encoding.ASCII.GetBytes("ecdsa-sha2-" + curveName));
-        WriteSshString(ms, Encoding.ASCII.GetBytes(curveName));
-        WriteSshString(ms, point);
-        return ms.ToArray();
+        int curveLength = Encoding.ASCII.GetByteCount(curveName);
+        byte[] result = new byte[checked(3 * 4 + "ecdsa-sha2-"u8.Length + 2 * curveLength + point.Length)];
+        var writer = new KeyBlobWriter(result);
+        writer.WriteAsciiString(curveName, "ecdsa-sha2-"u8);
+        writer.WriteAsciiString(curveName);
+        writer.WriteString(point);
+        return result;
     }
 
     /// <summary>
@@ -871,18 +873,16 @@ public static class SshPemParser
     /// </summary>
     private static byte[] BuildOpenSshEcdsaPrivateBlob(string curveName, byte[] point, byte[] d)
     {
-        byte[] check = new byte[4];
-        RandomNumberGenerator.Fill(check);
-
-        using var ms = new MemoryStream(256);
-        ms.Write(check, 0, 4);          // check1
-        ms.Write(check, 0, 4);          // check2 (equal — the parser only compares)
-        WriteSshString(ms, Encoding.ASCII.GetBytes("ecdsa-sha2-" + curveName));
-        WriteSshString(ms, Encoding.ASCII.GetBytes(curveName));
-        WriteSshString(ms, point);
-        WriteSshString(ms, d);
-        WriteSshString(ms, []);          // empty comment
-        return ms.ToArray();
+        int curveLength = Encoding.ASCII.GetByteCount(curveName);
+        byte[] result = new byte[checked(8 + 5 * 4 + "ecdsa-sha2-"u8.Length + 2 * curveLength + point.Length + d.Length)];
+        var writer = new KeyBlobWriter(result);
+        writer.WriteCheckIntegers();
+        writer.WriteAsciiString(curveName, "ecdsa-sha2-"u8);
+        writer.WriteAsciiString(curveName);
+        writer.WriteString(point);
+        writer.WriteString(d);
+        writer.WriteString([]); // empty comment
+        return result;
     }
 
     /// <summary>
@@ -946,10 +946,11 @@ public static class SshPemParser
     /// </summary>
     private static byte[] BuildSshEd25519PublicBlob(byte[] publicKey)
     {
-        using var ms = new MemoryStream(64);
-        WriteSshString(ms, "ssh-ed25519"u8);
-        WriteSshString(ms, publicKey);
-        return ms.ToArray();
+        byte[] result = new byte[checked(2 * 4 + "ssh-ed25519"u8.Length + publicKey.Length)];
+        var writer = new KeyBlobWriter(result);
+        writer.WriteString("ssh-ed25519"u8);
+        writer.WriteString(publicKey);
+        return result;
     }
 
     /// <summary>
@@ -961,20 +962,14 @@ public static class SshPemParser
     /// </summary>
     private static byte[] BuildOpenSshEd25519PrivateBlob(byte[] publicKey, byte[] seed)
     {
-        byte[] check = new byte[4];
-        RandomNumberGenerator.Fill(check);
-
-        using var ms = new MemoryStream(128);
-        ms.Write(check, 0, 4);          // check1
-        ms.Write(check, 0, 4);          // check2 (equal — the parser only compares)
-        WriteSshString(ms, "ssh-ed25519"u8);
-        WriteSshString(ms, publicKey);
-        byte[] priv = new byte[seed.Length + publicKey.Length];
-        seed.CopyTo(priv, 0);
-        publicKey.CopyTo(priv, seed.Length);
-        WriteSshString(ms, priv);
-        WriteSshString(ms, []);          // empty comment
-        return ms.ToArray();
+        byte[] result = new byte[checked(8 + 4 * 4 + "ssh-ed25519"u8.Length + 2 * publicKey.Length + seed.Length)];
+        var writer = new KeyBlobWriter(result);
+        writer.WriteCheckIntegers();
+        writer.WriteString("ssh-ed25519"u8);
+        writer.WriteString(publicKey);
+        writer.WriteString(seed, publicKey);
+        writer.WriteString([]); // empty comment
+        return result;
     }
 
     /// <summary>
@@ -1545,21 +1540,20 @@ public static class SshPemParser
     /// </summary>
     private static byte[] BuildOpenSshRsaPrivateBlob(byte[] n, byte[] e, byte[] d, byte[] coeff, byte[] p, byte[] q)
     {
-        byte[] check = new byte[4];
-        RandomNumberGenerator.Fill(check);
-
-        using var ms = new MemoryStream(512);
-        ms.Write(check, 0, 4);          // check1
-        ms.Write(check, 0, 4);          // check2 (equal — the parser only compares)
-        WriteSshString(ms, "ssh-rsa"u8);
-        WriteSshMpint(ms, n);
-        WriteSshMpint(ms, e);
-        WriteSshMpint(ms, d);
-        WriteSshMpint(ms, coeff);
-        WriteSshMpint(ms, p);
-        WriteSshMpint(ms, q);
-        WriteSshString(ms, []);          // empty comment
-        return ms.ToArray();
+        byte[] result = new byte[checked(8 + 8 * 4 + "ssh-rsa"u8.Length
+            + Endian.GetMpintLength(n) + Endian.GetMpintLength(e) + Endian.GetMpintLength(d)
+            + Endian.GetMpintLength(coeff) + Endian.GetMpintLength(p) + Endian.GetMpintLength(q))];
+        var writer = new KeyBlobWriter(result);
+        writer.WriteCheckIntegers();
+        writer.WriteString("ssh-rsa"u8);
+        writer.WriteMpint(n);
+        writer.WriteMpint(e);
+        writer.WriteMpint(d);
+        writer.WriteMpint(coeff);
+        writer.WriteMpint(p);
+        writer.WriteMpint(q);
+        writer.WriteString([]); // empty comment
+        return result;
     }
 
     /// <summary>
@@ -1569,26 +1563,50 @@ public static class SshPemParser
     /// </summary>
     private static byte[] BuildSshRsaPublicBlob(byte[] e, byte[] n)
     {
-        using var ms = new MemoryStream(512);
-        WriteSshString(ms, "ssh-rsa"u8);
-        WriteSshMpint(ms, e);
-        WriteSshMpint(ms, n);
-        return ms.ToArray();
+        byte[] result = new byte[checked(3 * 4 + "ssh-rsa"u8.Length
+            + Endian.GetMpintLength(e) + Endian.GetMpintLength(n))];
+        var writer = new KeyBlobWriter(result);
+        writer.WriteString("ssh-rsa"u8);
+        writer.WriteMpint(e);
+        writer.WriteMpint(n);
+        return result;
     }
 
-    private static void WriteSshString(Stream ms, ReadOnlySpan<byte> value)
+    /// <summary>Writes key fields into the final owned blob without temporary secret buffers.</summary>
+    private ref struct KeyBlobWriter(Span<byte> destination)
     {
-        Span<byte> len = stackalloc byte[4];
-        BinaryPrimitives.WriteInt32BigEndian(len, value.Length);
-        ms.Write(len);
-        ms.Write(value);
-    }
+        private Span<byte> _remaining = destination;
 
-    private static void WriteSshMpint(Stream ms, byte[] valueBE)
-    {
-        byte[] buf = new byte[4 + Endian.GetMpintLength(valueBE)];
-        Endian.WriteMpint(buf, valueBE);
-        ms.Write(buf);
+        public void WriteCheckIntegers()
+        {
+            RandomNumberGenerator.Fill(_remaining.Slice(0, 4));
+            _remaining.Slice(0, 4).CopyTo(_remaining.Slice(4, 4));
+            _remaining = _remaining.Slice(8);
+        }
+
+        public void WriteString(ReadOnlySpan<byte> value, ReadOnlySpan<byte> suffix = default)
+        {
+            int length = checked(value.Length + suffix.Length);
+            BinaryPrimitives.WriteInt32BigEndian(_remaining, length);
+            value.CopyTo(_remaining.Slice(4));
+            suffix.CopyTo(_remaining.Slice(4 + value.Length));
+            _remaining = _remaining.Slice(4 + length);
+        }
+
+        public void WriteAsciiString(string value, ReadOnlySpan<byte> prefix = default)
+        {
+            int length = checked(prefix.Length + Encoding.ASCII.GetByteCount(value));
+            BinaryPrimitives.WriteInt32BigEndian(_remaining, length);
+            prefix.CopyTo(_remaining.Slice(4));
+            Encoding.ASCII.GetBytes(value, _remaining.Slice(4 + prefix.Length, length - prefix.Length));
+            _remaining = _remaining.Slice(4 + length);
+        }
+
+        public void WriteMpint(byte[] value)
+        {
+            int written = Endian.WriteMpint(_remaining, value);
+            _remaining = _remaining.Slice(written);
+        }
     }
 
     /// <summary>

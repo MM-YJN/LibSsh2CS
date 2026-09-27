@@ -2331,10 +2331,7 @@ public sealed class SshChannel : IAsyncDisposable
             return;
         }
 
-        byte[] payload = new byte[5];
-        payload[0] = (byte)PacketType.ChannelEof;
-        BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(1, 4), RemoteId);
-        await _writer.WritePacketAsync(PacketType.ChannelEof, payload, cancellationToken)
+        await _writer.WriteChannelControlPacketAsync(PacketType.ChannelEof, RemoteId, cancellationToken)
             .ConfigureAwait(false);
 
         // channel.c:2516 — local.eof = 1 (set only after the send succeeds).
@@ -2479,10 +2476,7 @@ public sealed class SshChannel : IAsyncDisposable
     /// </summary>
     private async Task SendCloseAsync(CancellationToken cancellationToken)
     {
-        byte[] payload = new byte[5];
-        payload[0] = (byte)PacketType.ChannelClose;
-        BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(1, 4), RemoteId);
-        await _writer.WritePacketAsync(PacketType.ChannelClose, payload, cancellationToken)
+        await _writer.WriteChannelControlPacketAsync(PacketType.ChannelClose, RemoteId, cancellationToken)
             .ConfigureAwait(false);
     }
 }

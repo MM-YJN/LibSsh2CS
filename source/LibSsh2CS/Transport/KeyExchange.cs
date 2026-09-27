@@ -83,39 +83,36 @@ internal static class KeyExchange
     /// <c>LIBSSH2_METHOD_PREFS_STR</c> macro (<c>kex.c:3332</c>).</param>
     public static byte[] BuildKexInit(MethodPreferences prefs)
     {
-        // The payload starts with the SSH_MSG_KEXINIT type byte.
-        using var ms = new MemoryStream(2048);
-        ms.WriteByte((byte)PacketType.KexInit);
+        // Resolve preferences once so sizing and encoding use the same lists.
+        IReadOnlyList<string>[] lists =
+        [
+            BuildKexPrefs(prefs),
+            BuildPrefs(prefs, SshMethodType.HostKey, HostKeyMethods.DefaultPreferences),
+            BuildPrefs(prefs, SshMethodType.CryptCs, CipherMethods.DefaultPreferences),
+            BuildPrefs(prefs, SshMethodType.CryptSc, CipherMethods.DefaultPreferences),
+            BuildPrefs(prefs, SshMethodType.MacCs, MacMethods.DefaultPreferences),
+            BuildPrefs(prefs, SshMethodType.MacSc, MacMethods.DefaultPreferences),
+            BuildPrefs(prefs, SshMethodType.CompCs, CompressionMethods.DefaultPreferences),
+            BuildPrefs(prefs, SshMethodType.CompSc, CompressionMethods.DefaultPreferences),
+            BuildPrefs(prefs, SshMethodType.LangCs, []),
+            BuildPrefs(prefs, SshMethodType.LangSc, []),
+        ];
+        int length = 1 + CookieLen + 1 + 4;
+        foreach (IReadOnlyList<string> names in lists)
+        {
+            length = checked(length + 4 + GetNameListLength(names));
+        }
 
-        // 16-byte random cookie (kex.c:3404-3409, _libssh2_random).
-        byte[] cookie = new byte[CookieLen];
-        RandomNumberGenerator.Fill(cookie);
-        ms.Write(cookie, 0, CookieLen);
-
-        // 10 name-lists. Each uses the user-set pref string if non-empty,
-        // otherwise the DefaultPreferences list. The kex name-list always
-        // gets the two extensions prepended.
-        WriteNameList(ms, BuildKexPrefs(prefs));
-        WriteNameList(ms, BuildPrefs(prefs, SshMethodType.HostKey, HostKeyMethods.DefaultPreferences));
-        WriteNameList(ms, BuildPrefs(prefs, SshMethodType.CryptCs, CipherMethods.DefaultPreferences));
-        WriteNameList(ms, BuildPrefs(prefs, SshMethodType.CryptSc, CipherMethods.DefaultPreferences));
-        WriteNameList(ms, BuildPrefs(prefs, SshMethodType.MacCs, MacMethods.DefaultPreferences));
-        WriteNameList(ms, BuildPrefs(prefs, SshMethodType.MacSc, MacMethods.DefaultPreferences));
-        WriteNameList(ms, BuildPrefs(prefs, SshMethodType.CompCs, CompressionMethods.DefaultPreferences));
-        WriteNameList(ms, BuildPrefs(prefs, SshMethodType.CompSc, CompressionMethods.DefaultPreferences));
-        WriteNameList(ms, BuildPrefs(prefs, SshMethodType.LangCs, [""]));
-        WriteNameList(ms, BuildPrefs(prefs, SshMethodType.LangSc, [""]));
-
-        // first_kex_packet_follows = false (kex.c:3440). libssh2 never sends an
-        // optimistic KEX packet; we mirror that.
-        ms.WriteByte(0);
-
-        // reserved uint32 = 0 (kex.c:3443).
-        Span<byte> reserved = stackalloc byte[4];
-        BinaryPrimitives.WriteUInt32BigEndian(reserved, 0u);
-        ms.Write(reserved);
-
-        return ms.ToArray();
+        byte[] payload = new byte[length];
+        payload[0] = (byte)PacketType.KexInit;
+        RandomNumberGenerator.Fill(payload.AsSpan(1, CookieLen));
+        int offset = 1 + CookieLen;
+        foreach (IReadOnlyList<string> names in lists)
+        {
+            offset += WriteNameList(payload.AsSpan(offset), names);
+        }
+        // The zero-initialized tail holds first_kex_packet_follows=false and reserved=0.
+        return payload;
     }
 
     /// <summary>
@@ -371,17 +368,18 @@ internal static class KeyExchange
     /// </summary>
     private static string[] BuildKexPrefs(MethodPreferences prefs)
     {
-        string[] basePrefs = prefs.IsSet(SshMethodType.Kex)
+        IReadOnlyList<string> basePrefs = prefs.IsSet(SshMethodType.Kex)
             ? SplitCsv(prefs[SshMethodType.Kex])
-            : KexMethods.DefaultPreferences.ToArray();
+            : KexMethods.DefaultPreferences;
 
-        // Prepend the two extensions. Avoid duplicates if the user already
-        // included them (defensive — libssh2's kex.c:4199 does not dedup either,
-        // but a duplicate in the name-list is harmless per RFC 4251 §3.6.1).
-        string[] result = new string[basePrefs.Length + 2];
+        // Prepend both extensions, preserving any duplicates in user preferences.
+        string[] result = new string[basePrefs.Count + 2];
         result[0] = ExtInfoC;
         result[1] = KexStrictC;
-        Array.Copy(basePrefs, 0, result, 2, basePrefs.Length);
+        for (int i = 0; i < basePrefs.Count; i++)
+        {
+            result[i + 2] = basePrefs[i];
+        }
         return result;
     }
 
@@ -390,7 +388,7 @@ internal static class KeyExchange
     /// if set, otherwise the <paramref name="defaults"/> array. Mirrors
     /// libssh2's <c>LIBSSH2_METHOD_PREFS_STR</c> macro (<c>kex.c:3332</c>).
     /// </summary>
-    private static string[] BuildPrefs(
+    private static IReadOnlyList<string> BuildPrefs(
         MethodPreferences prefs, SshMethodType type, IReadOnlyList<string> defaults)
     {
         if (prefs.IsSet(type))
@@ -398,7 +396,7 @@ internal static class KeyExchange
             return SplitCsv(prefs[type]);
         }
 
-        return defaults.ToArray();
+        return defaults;
     }
 
     /// <summary>Splits a comma-separated preference string, skipping empty entries.</summary>
@@ -414,23 +412,34 @@ internal static class KeyExchange
         return csv.Split(',', StringSplitOptions.RemoveEmptyEntries);
     }
 
+    private static int GetNameListLength(IReadOnlyList<string> names)
+    {
+        int length = Math.Max(0, names.Count - 1); // comma separators
+        for (int i = 0; i < names.Count; i++)
+        {
+            length = checked(length + System.Text.Encoding.UTF8.GetByteCount(names[i]));
+        }
+        return length;
+    }
+
     /// <summary>
-    /// Writes one SSH name-list to <paramref name="ms"/>: a BE32 length prefix
-    /// followed by the UTF-8 bytes of the comma-joined names. Port of
-    /// <c>kex_method_list</c> (<c>kex.c:3310</c>) + the
+    /// Writes a length-prefixed name-list directly, preserving order and UTF-8 encoding.
+    /// Port of <c>kex_method_list</c> (<c>kex.c:3310</c>) and the
     /// <c>LIBSSH2_METHOD_PREFS_STR</c> length-prefix wrapper.
     /// </summary>
-    private static void WriteNameList(MemoryStream ms, string[] names)
+    private static int WriteNameList(Span<byte> destination, IReadOnlyList<string> names)
     {
-        // RFC 4251 §3.6.1: the name-list is a string of comma-separated names.
-        // An empty list encodes as a zero-length string (4 bytes of 0).
-        string joined = names.Length == 0 ? string.Empty : string.Join(',', names);
-        byte[] bytes = System.Text.Encoding.UTF8.GetBytes(joined);
-
-        Span<byte> len = stackalloc byte[4];
-        BinaryPrimitives.WriteInt32BigEndian(len, bytes.Length);
-        ms.Write(len);
-        ms.Write(bytes, 0, bytes.Length);
+        int offset = 4;
+        for (int i = 0; i < names.Count; i++)
+        {
+            if (i != 0)
+            {
+                destination[offset++] = (byte)',';
+            }
+            offset += System.Text.Encoding.UTF8.GetBytes(names[i], destination.Slice(offset));
+        }
+        BinaryPrimitives.WriteInt32BigEndian(destination, offset - 4);
+        return offset;
     }
 
     // ════════════════════════════════════════════════════════════════════
@@ -847,7 +856,7 @@ internal static class KeyExchange
         // ── 7. Send NEWKEYS (type 21, bare), then install OUTBOUND keys ──────
         // The NEWKEYS packet is the last under the old (cleartext) framing;
         // SetOutboundKeys flips the writer to encrypted + resets seqno.
-        await writer.WritePacketAsync(PacketType.NewKeys, new byte[] { (byte)PacketType.NewKeys }, cancellationToken)
+        await writer.WriteControlPacketAsync(PacketType.NewKeys, cancellationToken)
             .ConfigureAwait(false);
         await InstallOutboundKeysAsync(writer, negotiated, sharedSecret, exchangeHash, sessionId, cancellationToken)
             .ConfigureAwait(false);

@@ -429,9 +429,7 @@ internal sealed class ChannelRouter : IDisposable
     /// </summary>
     private async Task SendRequestFailureAsync(CancellationToken cancellationToken)
     {
-        byte[] payload = new byte[1];
-        payload[0] = (byte)PacketType.RequestFailure;
-        await _writer.WritePacketAsync(PacketType.RequestFailure, payload, cancellationToken)
+        await _writer.WriteControlPacketAsync(PacketType.RequestFailure, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -1657,10 +1655,7 @@ internal sealed class ChannelRouter : IDisposable
     /// </summary>
     private async Task SendChannelFailureAsync(uint recipientChannelId, CancellationToken cancellationToken)
     {
-        byte[] payload = new byte[5];
-        payload[0] = (byte)PacketType.ChannelFailure;
-        BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(1, 4), recipientChannelId);
-        await _writer.WritePacketAsync(PacketType.ChannelFailure, payload, cancellationToken)
+        await _writer.WriteChannelControlPacketAsync(PacketType.ChannelFailure, recipientChannelId, cancellationToken)
             .ConfigureAwait(false);
     }
 

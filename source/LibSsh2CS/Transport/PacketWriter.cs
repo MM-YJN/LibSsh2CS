@@ -380,6 +380,31 @@ internal sealed class PacketWriter : IAsyncDisposable
         }
     }
 
+    /// <summary>Frames a type-only control packet directly under the write lock.</summary>
+    internal Task WriteControlPacketAsync(int type, CancellationToken cancellationToken = default)
+        => WritePacketCoreAsync(type, new ControlBody(type, null), cancellationToken);
+
+    /// <summary>Frames a control packet containing only a recipient channel id.</summary>
+    internal Task WriteChannelControlPacketAsync(int type, uint remoteId,
+        CancellationToken cancellationToken = default)
+        => WritePacketCoreAsync(type, new ControlBody(type, remoteId), cancellationToken);
+
+    private readonly struct ControlBody(int type, uint? remoteId) : IPacketBody
+    {
+        public bool IsPlain => false;
+        public ReadOnlySpan<byte> PayloadSpan => default;
+        public int Length => remoteId.HasValue ? 5 : 1;
+
+        public void Write(Span<byte> destination)
+        {
+            destination[0] = (byte)type;
+            if (remoteId.HasValue)
+            {
+                BinaryPrimitives.WriteUInt32BigEndian(destination.Slice(1, 4), remoteId.Value);
+            }
+        }
+    }
+
     // Constrained struct dispatch keeps composed bodies out of interface boxes,
     // while sharing the same locking, compression, and encryption pipeline.
     private interface IPacketBody

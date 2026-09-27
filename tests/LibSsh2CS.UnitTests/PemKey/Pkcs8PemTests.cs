@@ -15,6 +15,30 @@ namespace LibSsh2CS.UnitTests.PemKey;
 /// </summary>
 public class Pkcs8PemTests
 {
+    [Theory]
+    [InlineData("legacy_pem.pkcs8.pem")]
+    [InlineData("legacy_pem.ec_pkcs8.pem")]
+    [InlineData("legacy_pem.ec_sec1_384.pem")]
+    [InlineData("legacy_pem.ec_sec1_521.pem")]
+    [InlineData("legacy_pem.ed25519_pkcs8.pem")]
+    public void ConvertedBlobs_HaveIndependentStorageAndMatchingCheckIntegers(string fixtureName)
+    {
+        byte[] pem = FixtureLoader.LoadBytes(fixtureName);
+        OpenSshKey first = SshPemParser.ParseOpenSshPrivateKey(pem);
+        OpenSshKey second = SshPemParser.ParseOpenSshPrivateKey(pem);
+        Assert.Equal(first.PublicKeyBlob, second.PublicKeyBlob);
+        Assert.Equal(first.PrivateKeyBlob.AsSpan(8).ToArray(), second.PrivateKeyBlob.AsSpan(8).ToArray());
+        Assert.Equal(first.PrivateKeyBlob.AsSpan(0, 4).ToArray(), first.PrivateKeyBlob.AsSpan(4, 4).ToArray());
+        Assert.Equal(second.PrivateKeyBlob.AsSpan(0, 4).ToArray(), second.PrivateKeyBlob.AsSpan(4, 4).ToArray());
+        byte[] expectedPublic = second.PublicKeyBlob.ToArray();
+        byte[] expectedPrivate = second.PrivateKeyBlob.ToArray();
+        Array.Clear(first.PublicKeyBlob);
+        Array.Clear(first.PrivateKeyBlob);
+        Assert.Equal(expectedPublic, second.PublicKeyBlob);
+        Assert.Equal(expectedPrivate, second.PrivateKeyBlob);
+        Assert.NotNull(SshPemKey.Parse(second));
+    }
+
     [Fact]
     public void ParsePkcs8_Unencrypted_ExtractsMatchingPublicKey()
     {
