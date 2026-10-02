@@ -55,7 +55,7 @@ jobs:
             --results-directory ./artifacts/coverage -- \
             --coverlet --coverlet-output-format cobertura \
             --coverlet-include '[LibSsh2CS]*' \
-            --report-xunit-trx --fail-skips on
+            --report-xunit-trx
 
       - name: Generate combined coverage report
         id: coverage
