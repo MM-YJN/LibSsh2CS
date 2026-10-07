@@ -37,8 +37,8 @@ namespace LibSsh2CS.Transport;
 /// the call ordering (parity with libssh2's single-threaded transport).
 /// </para>
 /// <para>
-/// <b>Per-family MAC-vs-encrypt order</b> (parity-critical, from the
-/// <c>transport.c</c> audit):
+/// <b>Per-family MAC-vs-encrypt order</b> (parity-critical, per libssh2's
+/// <c>transport.c</c>):
 /// <list type="bullet">
 /// <item><b>Standard</b> (AES-CBC/CTR + separate HMAC): MAC over plaintext →
 /// append MAC → encrypt the plaintext portion only (MAC stays clear).</item>

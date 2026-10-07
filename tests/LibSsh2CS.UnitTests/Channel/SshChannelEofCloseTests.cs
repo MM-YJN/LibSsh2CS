@@ -5,7 +5,7 @@ using LibSsh2CS.Transport;
 namespace LibSsh2CS.UnitTests.Channel;
 
 /// <summary>
-/// Tests for the public EOF/CLOSE surface added in 3.3.6:
+/// Tests for the public EOF/CLOSE surface:
 /// <see cref="SshChannel.SendEofAsync"/> (promoted from private),
 /// <see cref="SshChannel.IsEof"/>, <see cref="SshChannel.WaitEofAsync"/>,
 /// <see cref="SshChannel.WaitClosedAsync"/>. Mirrors <c>channel_send_eof</c>

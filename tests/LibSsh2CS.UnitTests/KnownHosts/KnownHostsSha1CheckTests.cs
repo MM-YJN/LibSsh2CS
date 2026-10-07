@@ -6,7 +6,7 @@ namespace LibSsh2CS.UnitTests.KnownHosts;
 
 /// <summary>
 /// Tests for <see cref="SshKnownHosts.Check(string, int, byte[], SshKnownHostKeyType, SshKnownHostFormat)"/>
-/// against <see cref="SshKnownHostFormat.Sha1"/>-stored entries — Phase 3 increment 3.1.3.
+/// against <see cref="SshKnownHostFormat.Sha1"/>-stored entries.
 /// </summary>
 /// <remarks>
 /// Exercises the HMAC-SHA1 hostname-hashing path of <c>knownhost_check</c>

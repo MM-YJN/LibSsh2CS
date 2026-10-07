@@ -11,7 +11,7 @@ using Microsoft.Extensions.Logging;
 namespace LibSsh2CS.IntegrationTests.Session;
 
 /// <summary>
-/// Phase 4 live SSH agent integration tests: starts a real ssh-agent on the
+/// Live SSH agent integration tests: starts a real ssh-agent on the
 /// test host, loads the Ed25519 test key via <c>ssh-add</c>, then runs a real
 /// OpenSSH server in Docker whose <c>authorized_keys</c> contains the
 /// matching public key. The full
@@ -155,7 +155,7 @@ public sealed class DockerAgentTests : IDisposable
         SshAgentIdentity rsa = Assert.Single(rsaIds);
 
         // Authenticate the live session via the agent. The server-sig-algs
-        // EXT_INFO exchange forces UserAuth to pick rsa-sha2-256 (or 512),
+        // EXT_INFO exchange forces SshUserAuth to pick rsa-sha2-256 (or 512),
         // which exercises the AlgorithmNameToFlags SHA-2 branches.
         await agent.AuthenticateWithIdentityAsync(
             session, SshDockerFixture.TestUser, rsa, cancellationToken);
@@ -350,7 +350,7 @@ public sealed class DockerAgentTests : IDisposable
     /// accepts as a valid Ed25519 signature over the userauth challenge.
     /// This implicitly verifies the entire sign path: ListIdentities picks
     /// the key, SignAsync issues a sign request with no flags, ParseSignResponse
-    /// extracts the sig blob, and UserAuth places it in the USERAUTH_REQUEST.
+    /// extracts the sig blob, and <see cref="SshUserAuth"/> places it in the USERAUTH_REQUEST.
     /// </summary>
     [Fact]
     public async Task Agent_Sign_Produces_Verifiable_Signature()

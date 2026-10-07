@@ -13,9 +13,8 @@ namespace LibSsh2CS.UnitTests;
 /// <summary>
 /// A minimal mock SSH server over an in-memory pipe pair, sufficient to drive
 /// <see cref="SshSession.HandshakeAsync"/> to completion (banner → KEXINIT →
-/// KEX → NEWKEYS → SERVICE_REQUEST → SERVICE_ACCEPT). Used by increment 3.4
-/// tests that need a post-handshake <see cref="SshSession"/> without a live
-/// TCP peer.
+/// KEX → NEWKEYS → SERVICE_REQUEST → SERVICE_ACCEPT). Used by tests that need
+/// a post-handshake <see cref="SshSession"/> without a live TCP peer.
 /// </summary>
 /// <remarks>
 /// <para>

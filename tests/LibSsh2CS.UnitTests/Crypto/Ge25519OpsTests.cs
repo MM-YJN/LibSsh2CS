@@ -5,10 +5,9 @@ using LibSsh2CS.Crypto;
 namespace LibSsh2CS.UnitTests.Crypto;
 
 /// <summary>
-/// Cross-checks the constant-time <see cref="Ge25519Ops"/> against the BigInteger
-/// <see cref="Fe25519"/> oracle on random points, plus RFC 8032 §7.1 known-answer
-/// tests for byte I/O. The BigInteger path is itself validated by Ed25519Tests /
-/// Ed25519SignTests, so it is a correct oracle.
+/// Cross-checks the constant-time <see cref="Ge25519Ops"/> against a BigInteger
+/// point oracle (field arithmetic via <see cref="Fe25519Oracle"/>) on random
+/// points, plus RFC 8032 §7.1 known-answer tests for byte I/O.
 /// </summary>
 public class Ge25519OpsTests
 {
@@ -38,9 +37,8 @@ public class Ge25519OpsTests
     ];
 
     // ════════════════════════════════════════════════════════════════════════
-    // BigInteger point oracle — a faithful copy of the math in
-    // Ed25519.cs (which is private). Used to cross-check the new Ge25519Ops.
-    // Will be removed in H.6 when Ed25519.cs is rewritten on Fe/Ge.
+    // BigInteger point oracle — reference point math used to cross-check the
+    // constant-time Ge25519Ops.
     // ════════════════════════════════════════════════════════════════════════
 
     private readonly struct BigPoint
@@ -218,10 +216,9 @@ public class Ge25519OpsTests
         BigInteger scalar = Fe25519Oracle.FromBytesLE(scalarBytes);
         big = BigMul(scalar, BigBasePoint());
 
-        // Ge path: decode B then run a small ladder locally (we don't have
-        // Ge25519ScalarMult yet — that's H.4). For H.3 tests we use the BigInteger
-        // path to derive the point, then re-encode and re-decode through Ge25519Ops
-        // to produce the GeP3 form. This still cross-checks FromBytes/ToBytes/IsOnCurve.
+        // Ge path: derive the point via the BigInteger ladder, then re-encode
+        // and re-decode through Ge25519Ops to produce the GeP3 form. This
+        // cross-checks FromBytes/ToBytes/IsOnCurve.
         byte[] encoded = BigEncode(big);
         Assert.Equal(0, Ge25519Ops.FromBytes(out ge, encoded));
     }

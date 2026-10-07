@@ -3,8 +3,8 @@ using LibSsh2CS.Crypto;
 namespace LibSsh2CS.UnitTests.Crypto;
 
 /// <summary>
-/// Ed25519 Sign known-answer tests from RFC 8032 §7.1. Sign was added in Phase 2
-/// for userauth publickey auth (Phase 1 shipped verify only). If these pass, the
+/// Ed25519 Sign known-answer tests from RFC 8032 §7.1, used by userauth
+/// publickey auth. If these pass, the
 /// scalar clamp, point encode, scalar multiplication, SHA-512-mod-L, and the
 /// full RFC 8032 §5.1.5 sign procedure are all correct against the prime
 /// reference implementation.

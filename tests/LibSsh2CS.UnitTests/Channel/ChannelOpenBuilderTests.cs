@@ -6,13 +6,13 @@ using LibSsh2CS.Transport;
 namespace LibSsh2CS.UnitTests.Channel;
 
 /// <summary>
-/// Phase 5.2 payload-builder tests — verifies the generalized
+/// Tests for the generalized
 /// <see cref="SshChannel.BuildChannelOpenPayload"/> (channel-type + extra data)
-/// and the new <c>BuildChannelOpenConfirmationPayload</c> /
-/// <c>BuildChannelOpenFailurePayload</c> helpers produce byte-exact wire
-/// payloads. These builders are reused by Phase 5.4 (direct-tcpip /
-/// direct-streamlocal factories) and Phase 5.6 (server-initiated channel-open
-/// dispatch).
+/// and the <c>BuildChannelOpenConfirmationPayload</c> /
+/// <c>BuildChannelOpenFailurePayload</c> helpers — verifies they produce
+/// byte-exact wire payloads. These builders are reused by the direct-tcpip /
+/// direct-streamlocal factories and the server-initiated channel-open
+/// dispatch.
 /// </summary>
 public class ChannelOpenBuilderTests
 {
@@ -21,7 +21,7 @@ public class ChannelOpenBuilderTests
     [Fact]
     public void BuildOpen_SessionType_NoExtra_MatchesOldHardcodedShape()
     {
-        // Parity with the pre-5.2 hard-coded "session" builder
+        // Parity with the legacy hard-coded "session" builder
         // (channel.c:199-203):
         //   [90][string "session"][u32 localId][u32 window][u32 packet]
         byte[] payload = SshChannel.BuildChannelOpenPayload(

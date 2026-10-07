@@ -3,7 +3,7 @@ using LibSsh2CS.Transport;
 namespace LibSsh2CS.UnitTests.Transport;
 
 /// <summary>
-/// Golden KATs for increment-8 hostkey verification, driven by the captured
+/// Golden KATs for hostkey verification, driven by the captured
 /// <c>Fixtures/hostkey/&lt;type&gt;/</c> oracles (7 host-key types, one live
 /// libssh2→OpenSSH handshake each, curve25519-sha256 kex). These are the
 /// parity-critical tests: they pin the sig-blob parse, the hash-per-type

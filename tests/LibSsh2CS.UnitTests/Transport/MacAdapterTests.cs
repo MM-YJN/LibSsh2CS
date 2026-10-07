@@ -7,7 +7,7 @@ using LibSsh2CS.Transport;
 namespace LibSsh2CS.UnitTests.Transport;
 
 /// <summary>
-/// Tests for the Phase 1 increment-4 MAC adapters: registry, metadata parity with
+/// Tests for the MAC adapters: registry, metadata parity with
 /// <c>mac.c</c>, and HMAC correctness cross-checked against the BCL HMAC over the
 /// SSH MAC input (<c>BE32(seqno) ‖ packet</c>).
 /// </summary>

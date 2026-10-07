@@ -2,7 +2,7 @@ namespace LibSsh2CS.UnitTests;
 
 /// <summary>
 /// Tests for <see cref="SshSignal"/> and <see cref="SshSignalExtensions.ToWireName"/>.
-/// Increment 3.6.1 — verifies the AOT-safe wire-name mapping for the signal
+/// Verifies the AOT-safe wire-name mapping for the signal
 /// enum consumed by <see cref="SshChannel.SignalAsync(SshSignal, CancellationToken)"/>.
 /// </summary>
 public class SshSignalTests

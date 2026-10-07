@@ -4,22 +4,23 @@
 # Usage: ./generate-goldens.sh [path-to-libssh2] [path-to-libgit2]
 # Defaults:  libssh2 at ~/repo/libssh2,  libgit2 at ~/repo/libgit2
 #
-# This is the Phase 1 skeleton. Per-increment population lands with each task:
-#   increment 1-2 (crypto):   NO fixture extraction. X25519/Ed25519 use the
-#                             compiled-in RFC 7748 §5.2/§6.1 and RFC 8032 §7.1
-#                             test vectors (see tests/.../Crypto/*Tests.cs).
-#   increment 3 (chacha/poly/dh): Poly1305 = RFC 8439 §2.5.2 (compiled in).
-#                             ChaCha20 + ChaChaPolySsh = goldens captured from
-#                             the upstream chacha.c / cipher-chachapoly.c (the
-#                             Bernstein 8-byte-nonce variant has NO RFC vector —
-#                             see /tmp/opencode/golden harness). DH group14 =
-#                             two-party self-convergence (RFC 3526 ships no KAT).
-#                             All compiled in; this script only re-derives them.
-#   increment 5 (packet framing): canned byte captures of one packet per framing
+# Fixture groups and their sources:
+#   crypto (X25519/Ed25519/chacha/poly/dh): mostly NO fixture extraction.
+#                             X25519/Ed25519 use the compiled-in RFC 7748
+#                             §5.2/§6.1 and RFC 8032 §7.1 test vectors (see
+#                             tests/.../Crypto/*Tests.cs). Poly1305 = RFC 8439
+#                             §2.5.2 (compiled in). ChaCha20 + ChaChaPolySsh =
+#                             goldens captured from the upstream chacha.c /
+#                             cipher-chachapoly.c (the Bernstein 8-byte-nonce
+#                             variant has NO RFC vector — see the capture
+#                             harness). DH group14 = two-party self-convergence
+#                             (RFC 3526 ships no KAT). All compiled in; this
+#                             script only re-derives them.
+#   packet framing:           canned byte captures of one packet per framing
 #                             mode (standard CBC/CTR, ETM, AES-GCM, ChaCha20).
-#   increment 6-7 (KEX):      canned KEXINIT captures + a captured e/f/K/H set
+#   kex:                      canned KEXINIT captures + a captured e/f/K/H set
 #                             for the exchange-hash + key-derivation KATs.
-#   increment 8 (hostkey/e2e): real hostkey blob + signature + H per hostkey
+#   hostkey/e2e:              real hostkey blob + signature + H per hostkey
 #                             type, captured from a localhost OpenSSH handshake.
 #
 # Captures are produced by recording a real OpenSSH (or libssh2 client) handshake
@@ -45,12 +46,12 @@ mkdir -p "$FIXTURES"
 # ---------------------------------------------------------------------------
 if [[ ! -d "$LIBSSH2/src" ]]; then
     echo "warning: libssh2 checkout not found at $LIBSSH2 (canned-capture" >&2
-    echo "         generation for increments 5-8 needs a working ssh-keygen" >&2
-    echo "         + sshd, not the libssh2 source)" >&2
+    echo "         generation for packet/kex/hostkey fixtures needs a working" >&2
+    echo "         ssh-keygen + sshd, not the libssh2 source)" >&2
 fi
 
 # ---------------------------------------------------------------------------
-# increment 5 (packet framing) — DONE. Capture pipeline:
+# Packet framing — capture pipeline:
 #   Capture/capture-packets.py --libssh2-src ~/repo/libssh2 --out Fixtures/packet
 #
 # It builds an instrumented libssh2 (debug logging + a getenv("LIBSSH2_PACKET_DUMP")
@@ -72,7 +73,7 @@ fi
 # committed; CI never runs this script.
 
 # ---------------------------------------------------------------------------
-# increment 6-7 (KEX) — DONE. Capture pipeline (same harness as increment 5):
+# KEX — capture pipeline (same harness as packet framing):
 #   Capture/capture-packets.py --libssh2-src ~/repo/libssh2 --out Fixtures/packet
 #
 # The instrumented libssh2 build now carries a SECOND getenv("LIBSSH2_KEX_DUMP")
@@ -98,16 +99,18 @@ fi
 # reproduce byte-exact from these fixtures (verified at capture time).
 
 # ---------------------------------------------------------------------------
-# TODO increment 8 (hostkey + end-to-end):
-# For each ssh-{ed25519,rsa-sha2-256,rsa-sha2-512,ecdsa-sha2-nistp256} host key:
-#   - host key blob (K_S)         -> $FIXTURES/hostkey/<type>_blob.bin
-#   - signature blob (h_sig)      -> $FIXTURES/hostkey/<type>_sig.bin
-#   - exchange hash it signs (H)  -> $FIXTURES/hostkey/<type>_hash.bin
+# hostkey + end-to-end captures:
+# For each in-scope host-key type (ssh-ed25519, ecdsa-sha2-nistp256/384/521,
+# rsa-sha2-256, rsa-sha2-512, ssh-rsa):
+#   - host key blob (K_S)         -> $FIXTURES/hostkey/<type>/host_key.bin
+#   - signature blob (h_sig)      -> $FIXTURES/hostkey/<type>/sig.bin
+#   - exchange hash it signs (H)  -> $FIXTURES/hostkey/<type>/exchange_hash.bin
 # Captured from a localhost sshd with each key type configured. The end-to-end
-# Docker test is the live cross-check.
+# Docker test is the live cross-check. Generated by
+# Capture/capture-packets.py (hostkey modes); fixtures are committed.
 
 # ---------------------------------------------------------------------------
-# Phase 3.6 — known_hosts parity fixtures (ssh-keygen produced).
+# known_hosts parity fixtures (ssh-keygen produced).
 #
 # Produces a corpus of known_hosts lines for all 5 in-scope host key types in
 # both plain and `ssh-keygen -H` hashed forms, plus the raw wire-format key
@@ -226,6 +229,7 @@ if [[ "${1:-}" != "--skip-known-hosts" ]]; then
     generate_known_hosts_fixtures
 fi
 
-echo "Skeleton ready. Population TODOs land with increments 5-8."
-echo "(Increments 1-2 — X25519/Ed25519 crypto — use compiled-in RFC vectors.)"
+echo "Known-hosts fixtures regenerated."
+echo "(Crypto groups — X25519/Ed25519 etc. — use compiled-in RFC vectors.)"
+echo "Packet/kex/hostkey fixtures are captured separately:"
 echo "Run: $(dirname "$0")/Capture/capture-packets.py --libssh2-src $LIBSSH2"

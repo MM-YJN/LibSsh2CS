@@ -3,7 +3,7 @@ using LibSsh2CS.Transport;
 namespace LibSsh2CS.UnitTests.Transport;
 
 /// <summary>
-/// Tests for the Phase 1 increment-4 pure-data constants: <see cref="PacketType"/>
+/// Tests for the pure-data constants: <see cref="PacketType"/>
 /// (SSH message numbers) and <see cref="SessionState"/> (the session state bitmask).
 /// Values are pinned to <c>libssh2_priv.h</c> for wire/state parity.
 /// </summary>

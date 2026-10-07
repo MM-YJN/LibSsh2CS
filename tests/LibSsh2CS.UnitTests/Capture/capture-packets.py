@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture orchestrator for LibSsh2CS increment 5 packet-framing fixtures.
+"""Capture orchestrator for LibSsh2CS packet-framing fixtures.
 
 Spawns a localhost OpenSSH sshd (legacy-enabling all in-scope algorithms), runs
 the libssh2 capture harness against it for each framing mode, parses the
@@ -78,7 +78,7 @@ KEX_MODES = [
     ("diffie-hellman-group14-sha256", "diffie-hellman-group14-sha256", "SHA-256", "mpint"),
 ]
 
-# The 7 in-scope host-key types to capture (increment 8 hostkey-verify oracle).
+# The 7 in-scope host-key types to capture (hostkey-verify oracle).
 # Each pins curve25519-sha256 kex + aes256-ctr/hmac-sha2-256 so all 6 derived
 # keys are meaningful; only the host-key algorithm varies. The captured K_S + H
 # + sig triple is the byte-exact KAT input for HostKeyVerifier.Verify.
@@ -303,7 +303,7 @@ def gen_keys(keysdir):
     """Generate throwaway host + user keys if missing.
 
     Host keys: ed25519 (always) + RSA-2048 + ECDSA nistp256/384/521 for the
-    increment-8 hostkey-verify captures. User key: ed25519 only (auth)."""
+    hostkey-verify captures. User key: ed25519 only (auth)."""
     keysdir.mkdir(parents=True, exist_ok=True)
     host = keysdir / "host_ed25519"
     user = keysdir / "user_ed25519"
@@ -658,7 +658,7 @@ def write_kex_fixtures(out_root, method_dir, kex, hash_name, e_field, parsed,
 
 
 def write_hostkey_fixtures(out_root, type_dir, hostkey, parsed):
-    """Write the Fixtures/hostkey/<type>/ oracle for increment-8 hostkey verify.
+    """Write the Fixtures/hostkey/<type>/ oracle for hostkey verify.
 
     Three byte-exact inputs to HostKeyVerifier.Verify: the server host-key blob
     K_S, the exchange hash H (the signed message), and the raw signature blob.
@@ -792,7 +792,7 @@ def main():
             finally:
                 kill_sshd(pid)
 
-    # 6. Capture each host-key type (K_S + H + sig oracle for increment-8 verify).
+    # 6. Capture each host-key type (K_S + H + sig oracle for hostkey verify).
     hk_out = (here.parent / "Fixtures" / "hostkey").resolve()
     hk_out.mkdir(parents=True, exist_ok=True)
     # Fixed kex/cipher/mac so the only variable is the host-key algorithm. curve25519

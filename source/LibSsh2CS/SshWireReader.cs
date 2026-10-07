@@ -5,7 +5,7 @@ namespace LibSsh2CS;
 
 /// <summary>
 /// Minimal SSH wire-format reader. Reads length-prefixed strings, uint32, and
-/// raw bytes from a cursor over a byte array. Mirrors libssh2's
+/// raw bytes from a cursor over a span of bytes. Mirrors libssh2's
 /// <c>_libssh2_get_string</c> / <c>_libssh2_get_u32</c> family.
 /// </summary>
 internal ref struct SshWireReader

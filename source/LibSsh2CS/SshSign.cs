@@ -40,7 +40,7 @@ namespace LibSsh2CS;
 /// <para>
 /// <b>RSA-SHA2 algorithm selection</b> (RFC 8332): <c>ssh-rsa</c> signs with
 /// SHA-1, <c>rsa-sha2-256</c> with SHA-256, <c>rsa-sha2-512</c> with SHA-512.
-/// The caller (<c>UserAuth</c>) picks the algorithm name from
+/// The caller (<see cref="SshUserAuth"/>) picks the algorithm name from
 /// <c>server-sig-algs</c> (parity with <c>userauth.c:1351</c>
 /// <c>_libssh2_key_sign_algorithm</c>) and passes it here; this type's
 /// <see cref="Sign"/> switches on it for the hash.
@@ -55,7 +55,7 @@ internal static class SshSign
     /// </summary>
     /// <param name="key">The parsed private key.</param>
     /// <param name="data">The raw data to sign (the <c>session_id ‖
-    /// USERAUTH_REQUEST</c> buffer built by <c>UserAuth</c>).</param>
+    /// USERAUTH_REQUEST</c> buffer built by <see cref="SshUserAuth"/>).</param>
     /// <param name="algoName">The signing algorithm name — must be a valid
     /// publickey algorithm for the key type: <c>ssh-rsa</c> /
     /// <c>rsa-sha2-256</c> / <c>rsa-sha2-512</c> for RSA,
@@ -246,7 +246,7 @@ internal static class SshSign
     /// <summary>
     /// Builds the ECDSA raw signature body <c>[string r][string s]</c> from the
     /// big-endian r and s. Mirrors the SSH wire form the verify path parses
-    /// (<c>HostKeyVerifier.cs:159-161</c>).
+    /// (<c>HostKeyVerifier.VerifyEcdsa</c>).
     /// </summary>
     private static byte[] BuildEcdsaSshSigBody(byte[] r, byte[] s)
     {

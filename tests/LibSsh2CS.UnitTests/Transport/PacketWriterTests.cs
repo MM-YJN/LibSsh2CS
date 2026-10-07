@@ -252,7 +252,7 @@ public class PacketWriterTests
         // We cannot easily exercise the reset in cleartext (the reset only
         // fires under strictKex which is set by SetOutboundKeys). So this
         // test documents the contract via the reader-side equivalent, which
-        // is tested in PacketReaderTests.Read_NewKeysResetsSeqno.
+        // is tested in RunExchangeFlowTests.RunExchange_Curve25519_InstallsKeysAndResetsSeqno.
         // Here we just confirm seqno increments normally in cleartext.
         await writer.WritePacketAsync(PacketType.Ignore, (byte[])[2], cancellationToken);
         await writer.WritePacketAsync(PacketType.Ignore, (byte[])[2], cancellationToken);

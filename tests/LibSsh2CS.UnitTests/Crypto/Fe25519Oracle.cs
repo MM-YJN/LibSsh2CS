@@ -4,18 +4,16 @@ namespace LibSsh2CS.UnitTests.Crypto;
 
 /// <summary>
 /// Test-only BigInteger oracle for arithmetic in GF(2^255 - 19). Originally
-/// the production field type (<c>source/LibSsh2CS/Crypto/Fe25519.cs</c>); moved
-/// here in H.6 when <c>Ed25519.cs</c> was rewritten on the constant-time
-/// <c>Fe</c>/<c>Fe25519Ops</c> types and the BigInteger version was no longer
-/// on any production path.
+/// the production field type; moved to the test project when <c>Ed25519.cs</c>
+/// was rewritten on the constant-time <c>Fe</c>/<c>Fe25519Ops</c> types and
+/// the BigInteger version was no longer on any production path.
 /// </summary>
 /// <remarks>
 /// <para>
 /// Used as the cross-check oracle by <c>Fe25519OpsTests</c>,
-/// <c>Ge25519OpsTests</c>, and <c>Ge25519ScalarMultTests</c>. The BigInteger
-/// math is itself validated by the RFC 7748/8032 known-answer tests
-/// (<c>X25519Tests</c>, <c>Ed25519Tests</c>, <c>Ed25519SignTests</c>), so it is
-/// a correct reference for the constant-time implementation.
+/// <c>Ge25519OpsTests</c>, and <c>Ge25519ScalarMultTests</c>. It implements the
+/// RFC 7748 §5 / RFC 8032 reference arithmetic directly, so byte-exact agreement
+/// pins the constant-time implementation to the reference behavior.
 /// </para>
 /// <para>
 /// <b>Not constant-time.</b> Do not use this type in production code. It lives

@@ -8,7 +8,7 @@ using Microsoft.Extensions.Time.Testing;
 namespace LibSsh2CS.UnitTests;
 
 /// <summary>
-/// Increment 3.4.6 — end-to-end rekey-under-load tests. These exercise the
+/// End-to-end rekey-under-load tests. These exercise the
 /// rekey auto-trigger and server-initiated rekey during actual channel data
 /// flow (large reads, large writes, multi-channel routing), verifying the
 /// trigger fires at the right point and the channel op resumes after the
@@ -18,7 +18,7 @@ namespace LibSsh2CS.UnitTests;
 /// All tests use <see cref="MockSshServer"/> for the handshake + encrypted
 /// post-handshake transport. The rekey callback is a counting stub (doesn't
 /// actually drive a second KEX — that would require the mock to implement a
-/// rekey KEX exchange, which is the domain of the live Docker test in 3.5).
+/// rekey KEX exchange, which is the domain of the live Docker tests).
 /// The goal is to verify the trigger fires at the right point in the data
 /// flow and the channel op continues normally afterward.
 /// </remarks>

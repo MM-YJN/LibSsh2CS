@@ -7,10 +7,10 @@ using LibSsh2CS.Transport;
 namespace LibSsh2CS.UnitTests.Transport;
 
 /// <summary>
-/// Increment 3.4.1 — rekey counters on <see cref="PacketReader"/> and
+/// Rekey counters on <see cref="PacketReader"/> and
 /// <see cref="PacketWriter"/>. Each direction tracks bytes + packets under the
 /// current key; both reset to 0 in <c>SetInboundKeys</c>/<c>SetOutboundKeys</c>
-/// at the NEWKEYS transition. The rekey auto-trigger (3.4.4) consults these
+/// at the NEWKEYS transition. The rekey auto-trigger consults these
 /// counters to enforce RFC 4253 §9 limits.
 /// </summary>
 /// <remarks>

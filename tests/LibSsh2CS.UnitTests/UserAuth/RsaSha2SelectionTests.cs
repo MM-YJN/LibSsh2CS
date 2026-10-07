@@ -2,7 +2,7 @@ namespace LibSsh2CS.UnitTests.UserAuth;
 
 /// <summary>
 /// RSA-SHA2 algorithm selection tests — verifies the
-/// <c>UserAuth.SelectSigningAlgorithm</c> dispatch picks the strongest
+/// <c>SshUserAuth.SelectSigningAlgorithm</c> dispatch picks the strongest
 /// mutually-supported RSA-SHA2 variant from <c>server-sig-algs</c>, falling
 /// back to <c>ssh-rsa</c> (SHA-1) when the server advertises no SHA-2 variant.
 /// Parity with <c>_libssh2_key_sign_algorithm</c> (<c>userauth.c:1351</c>).
@@ -46,7 +46,7 @@ public class RsaSha2SelectionTests
     /// <summary>
     /// When the server advertises no SHA-2 variant (only ssh-rsa), the client
     /// falls back to ssh-rsa (SHA-1). OpenSSH 8.2+ will reject this; the caller's
-    /// retry loop (Phase N) handles the failure.
+    /// retry loop handles the failure.
     /// </summary>
     [Fact]
     public void Select_OnlySshRsa_FallsBackToSshRsa()

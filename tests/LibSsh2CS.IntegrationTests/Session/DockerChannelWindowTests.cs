@@ -21,13 +21,13 @@ namespace LibSsh2CS.IntegrationTests.Session;
 /// <c>packet.c:994-1030</c>).</item>
 /// <item><see cref="SshExtendedDataMode.Ignore"/> set AFTER stderr is already
 /// buffered (mode transition) — <see cref="SshChannel.SetExtendedDataModeAsync"/>
-/// flushes the buffered stderr via
-/// <see cref="SshChannel.FlushStderrBufferAsync"/> and refunds the freed
+/// drops the buffered stderr and refunds the freed
 /// window (parity intent <c>channel.c:2010-2016</c>).</item>
 /// </list>
-/// Both paths light up <see cref="SshChannel.FlushStderrBufferAsync"/>,
-/// <see cref="SshChannel.RefundInboundWindowAsync"/>, and
-/// <see cref="SshChannel.SendWindowAdjustAsync"/> (all 0% → covered).
+/// Both paths light up <see cref="SshChannel.RefundInboundWindowAsync"/> and
+/// <see cref="SshChannel.SendWindowAdjustAsync"/> (0% → covered), and the
+/// second also lights up the Ignore-transition arm of
+/// <see cref="SshChannel.SetExtendedDataModeAsync"/>.
 /// </summary>
 /// <remarks>
 /// <b>Gating:</b> <see cref="SshImageFixtureBase.StartContainerAsync"/>
@@ -107,20 +107,18 @@ public sealed class DockerChannelWindowTests : IDisposable
 
     /// <summary>
     /// <see cref="SshExtendedDataMode.Ignore"/> set AFTER stderr is already
-    /// buffered: <see cref="SshChannel.SetExtendedDataModeAsync"/> flushes the
-    /// buffered stderr via <see cref="SshChannel.FlushStderrBufferAsync"/>
-    /// (drops all buffered stderr packets, decrements <c>_readAvail</c>, and
-    /// refunds the freed window bytes via
+    /// buffered: <see cref="SshChannel.SetExtendedDataModeAsync"/> drops the
+    /// buffered stderr (decrements <c>_readAvail</c>) and refunds the freed
+    /// window bytes via
     /// <see cref="SshChannel.RefundInboundWindowAsync"/> →
-    /// <see cref="SshChannel.SendWindowAdjustAsync"/>). The test starts in
+    /// <see cref="SshChannel.SendWindowAdjustAsync"/>. The test starts in
     /// <see cref="SshExtendedDataMode.Normal"/>, execs a command that writes a
     /// large stderr payload, performs a single stdout read (pumps the transport
     /// so stderr is delivered + buffered), then switches to
-    /// <see cref="SshExtendedDataMode.Ignore"/> — triggering the flush. Lights
-    /// up <see cref="SshChannel.FlushStderrBufferAsync"/> (0% → covered) and
-    /// the Ignore-transition branch of
-    /// <see cref="SshChannel.SetExtendedDataModeAsync"/> (only Normal/Merge
-    /// arms were covered before).
+    /// <see cref="SshExtendedDataMode.Ignore"/> — triggering the drop. Lights
+    /// up the buffered-stderr drop and the Ignore-transition branch of
+    /// <see cref="SshChannel.SetExtendedDataModeAsync"/> (0% → covered;
+    /// only the Normal/Merge arms were covered before).
     /// </summary>
     /// <remarks>
     /// <para>
@@ -128,8 +126,8 @@ public sealed class DockerChannelWindowTests : IDisposable
     /// would pump the transport until the peer's EOF/CLOSE, at which point all
     /// stderr has been delivered + buffered. A single bounded read guarantees
     /// at least one EXTENDED_DATA packet is delivered + buffered before the
-    /// mode switch — so <see cref="SshChannel.FlushStderrBufferAsync"/>'s
-    /// non-empty-buffer path (the refund loop at SshChannel.cs:1243-1266) runs.
+    /// mode switch — so <see cref="SshChannel.RefundInboundWindowAsync"/>'s
+    /// non-empty-refund path runs.
     /// </para>
     /// <para>
     /// <b>Why a large stderr payload.</b> A tiny payload might be fully
@@ -168,7 +166,7 @@ public sealed class DockerChannelWindowTests : IDisposable
         int n = await channel.ReadAsync(buf, ct);
         Assert.True(n > 0, "expected at least one stdout read before the mode switch");
 
-        // Switch to Ignore — this triggers FlushStderrBufferAsync which drops
+        // Switch to Ignore — SetExtendedDataModeAsync drops
         // any buffered stderr and refunds the freed window via
         // RefundInboundWindowAsync → SendWindowAdjustAsync.
         await channel.SetExtendedDataModeAsync(SshExtendedDataMode.Ignore, ct);

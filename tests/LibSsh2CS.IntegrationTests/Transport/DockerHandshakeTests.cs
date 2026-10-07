@@ -11,7 +11,7 @@ using Microsoft.Extensions.Logging;
 namespace LibSsh2CS.IntegrationTests.Transport;
 
 /// <summary>
-/// Increment-8 end-to-end gate: a real SSH transport handshake against a live
+/// End-to-end gate: a real SSH transport handshake against a live
 /// OpenSSH server in Docker. Exercises the full transport stack — banner
 /// exchange, KEXINIT build/parse/negotiate, <see cref="KeyExchange.RunExchangeAsync"/>,
 /// and <see cref="HostKeyVerifier"/> — against an unmodified sshd. This is the
@@ -21,8 +21,8 @@ namespace LibSsh2CS.IntegrationTests.Transport;
 /// <remarks>
 /// <para>
 /// The test completes the SSH <em>transport</em> handshake only (banner → KEX →
-/// NEWKEYS → hostkey verify). It does NOT perform userauth or open a channel —
-/// that is Phase 2/3 scope. The handshake ends as soon as the derived keys are
+/// NEWKEYS → hostkey verify). It does NOT perform userauth or open a channel.
+/// The handshake ends as soon as the derived keys are
 /// installed and the hostkey signature is verified, then disconnects.
 /// </para>
 /// <para>
@@ -114,7 +114,7 @@ public sealed class DockerHandshakeTests : IDisposable
     /// <c>rsa-sha2-512</c> is not tested separately because it shares the
     /// same <c>VerifyRsa</c> body (only the <see cref="HashAlgorithmName"/>
     /// differs); the SHA-512 branch of <c>RsaHash</c> is reached via the
-    /// <c>DockerNegotiationTests.Handshake_HostKey_RsaSha2_512</c> pinned
+    /// <c>DockerNegotiationTests.Handshake_HostKey_RsaSha2_512_NegotiatesAndExecRoundTrips</c> pinned
     /// negotiation test, and a single RSA verify test is sufficient to light
     /// up the RSA verify body.
     /// </remarks>

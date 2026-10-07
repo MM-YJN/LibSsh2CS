@@ -6,10 +6,10 @@ using Microsoft.Extensions.Logging;
 namespace LibSsh2CS.IntegrationTests.Session;
 
 /// <summary>
-/// Phase 2 live auth integration tests: runs a real OpenSSH server in Docker
+/// Live auth integration tests: runs a real OpenSSH server in Docker
 /// with password + publickey auth enabled (and kbdint on the Debian variant),
 /// then exercises <see cref="SshSession.HandshakeAsync"/> + the
-/// <see cref="SshUserAuth"/> methods against it. Extends the Phase 1
+/// <see cref="SshUserAuth"/> methods against it. Extends the
 /// <c>DockerHandshakeTests</c> pattern (which only does the transport
 /// handshake) with actual authentication flows.
 /// </summary>
@@ -156,8 +156,8 @@ public sealed class DockerAuthTests : IDisposable
     // remaining 0% cluster in the client-auth path: SshSign.SignEcdsa +
     // ParseEcdsaDerSig + BuildEcdsaSshSigBody + ParseSec1Point (~50 lines in
     // SshSign.cs), SshEcdsaPemKey (0% → covered), the ECDSA arm of
-    // SelectSigningAlgorithm (SshUserAuth.cs:603-610), and SshPemKey.ParseEcdsa
-    // (SshPemKey.cs:75-118). Each test uses a distinct ssh-keygen-generated
+    // <c>SshUserAuth.SelectSigningAlgorithm</c>, and <c>SshPemKey.ParseEcdsa</c>.
+    // Each test uses a distinct ssh-keygen-generated
     // ECDSA key pair whose public half is baked into authorized_keys by the
     // matching AlpineWithEcdsaXxxKeySshImageFixture.
     // ════════════════════════════════════════════════════════════════════════

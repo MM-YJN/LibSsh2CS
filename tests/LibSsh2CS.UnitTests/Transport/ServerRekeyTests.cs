@@ -6,7 +6,7 @@ using LibSsh2CS.Transport;
 namespace LibSsh2CS.UnitTests.Transport;
 
 /// <summary>
-/// Increment 3.4.3 — server-initiated rekey handling in
+/// Server-initiated rekey handling in
 /// <see cref="PacketQueue"/>. A post-handshake <c>SSH_MSG_KEXINIT</c> from the
 /// server is a rekey request (parity with libssh2's <c>packet.c:1355-1388</c>).
 /// The queue stashes the server KEXINIT and invokes the

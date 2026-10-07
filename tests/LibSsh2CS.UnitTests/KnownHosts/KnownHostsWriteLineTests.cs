@@ -8,7 +8,7 @@ namespace LibSsh2CS.UnitTests.KnownHosts;
 
 /// <summary>
 /// Tests for <see cref="SshKnownHosts.WriteLine"/> and ReadLine → WriteLine
-/// round-trip parity — Phase 3 increment 3.1.5.
+/// round-trip parity.
 /// </summary>
 /// <remarks>
 /// Mirrors the eight sub-format branches of <c>knownhost_writeline</c>

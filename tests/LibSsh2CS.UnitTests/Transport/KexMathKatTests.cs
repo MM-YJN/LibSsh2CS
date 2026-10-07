@@ -7,7 +7,7 @@ using LibSsh2CS.Util;
 namespace LibSsh2CS.UnitTests.Transport;
 
 /// <summary>
-/// Golden KATs for the increment-7 KEX math: <see cref="KeyExchange.ComputeExchangeHash"/>
+/// Golden KATs for the KEX math: <see cref="KeyExchange.ComputeExchangeHash"/>
 /// and <see cref="KeyExchange.DeriveKey"/>, driven by the captured
 /// <c>Fixtures/kex/&lt;method&gt;/</c> oracles (5 KEX methods, one live
 /// libssh2→OpenSSH handshake each). These are the parity-critical tests — they

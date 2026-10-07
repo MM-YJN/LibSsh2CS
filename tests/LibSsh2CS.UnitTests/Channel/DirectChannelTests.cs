@@ -6,7 +6,7 @@ using LibSsh2CS.Transport;
 namespace LibSsh2CS.UnitTests.Channel;
 
 /// <summary>
-/// Phase 5.4 <c>direct-tcpip</c> and <c>direct-streamlocal@openssh.com</c>
+/// <c>direct-tcpip</c> and <c>direct-streamlocal@openssh.com</c>
 /// channel-open tests. Verifies the factories:
 /// <list type="bullet">
 /// <item>Build correct wire payloads (parity with channel.c:399-419 and

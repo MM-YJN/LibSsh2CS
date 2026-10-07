@@ -7,9 +7,9 @@ using LibSsh2CS.Transport;
 namespace LibSsh2CS.UnitTests.Channel;
 
 /// <summary>
-/// Phase 5.5 <see cref="SshListener"/> tests. Verifies the listener lifecycle
-/// independently of the inbound forwarded-tcpip dispatch (which is added in
-/// 5.6): listen + reply parsing, bound-port extraction, cancel-tcpip-forward
+/// <see cref="SshListener"/> tests. Verifies the listener lifecycle
+/// independently of the inbound forwarded-tcpip dispatch: listen + reply
+/// parsing, bound-port extraction, cancel-tcpip-forward
 /// teardown, accept-queue mechanics, and session-dispose propagation.
 /// </summary>
 /// <remarks>
@@ -18,7 +18,7 @@ namespace LibSsh2CS.UnitTests.Channel;
 /// <c>tcpip-forward</c> / <c>cancel-tcpip-forward</c> round-trip by feeding
 /// framed replies from the "server" side. Accept-queue tests manually call
 /// <see cref="SshListener.TryEnqueueAccept"/> (the internal seam used by
-/// Phase 5.6's inbound dispatch).
+/// the router's inbound dispatch).
 /// </remarks>
 public class SshListenerTests
 {

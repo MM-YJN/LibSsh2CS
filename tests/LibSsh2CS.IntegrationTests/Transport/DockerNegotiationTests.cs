@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 namespace LibSsh2CS.IntegrationTests.Transport;
 
 /// <summary>
-/// Phase 8 negotiation-matrix live integration tests: pins the client side
+/// Negotiation-matrix live integration tests: pins the client side
 /// to a single algorithm (via <see cref="SshSession"/>'s
 /// <c>this[SshMethodType.*]</c> indexer — libssh2's
 /// <c>libssh2_session_method_pref</c> semantics) and verifies the full

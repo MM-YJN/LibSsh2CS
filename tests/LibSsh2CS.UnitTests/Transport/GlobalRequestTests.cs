@@ -7,7 +7,7 @@ using LibSsh2CS.Transport;
 namespace LibSsh2CS.UnitTests.Transport;
 
 /// <summary>
-/// Phase 5.3 <c>SSH_MSG_GLOBAL_REQUEST</c> send/reply plumbing tests.
+/// <c>SSH_MSG_GLOBAL_REQUEST</c> send/reply plumbing tests.
 /// Verifies the global-request machinery on <see cref="ChannelRouter"/>:
 /// <list type="bullet">
 /// <item>Outbound payload byte-exactness for keepalive@libssh2.org,

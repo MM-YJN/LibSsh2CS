@@ -1,14 +1,14 @@
 namespace LibSsh2CS.UnitTests.PemKey;
 
 /// <summary>
-/// PemKey.Parse tests — verifies the type-specific private key blob parsing for
-/// RSA, Ed25519 (and ECDSA when fixtures are available). Uses the same Phase 0
+/// SshPemKey.Parse tests — verifies the type-specific private key blob parsing for
+/// RSA, Ed25519 (and ECDSA when fixtures are available). Uses the same
 /// fixtures as PemParserTests (ssh-keygen-generated keys, plain + encrypted).
 /// </summary>
 public class PemKeyParseTests
 {
     /// <summary>
-    /// Parses an unencrypted Ed25519 key via PemParser then PemKey.Parse; asserts
+    /// Parses an unencrypted Ed25519 key via SshPemParser then SshPemKey.Parse; asserts
     /// the seed is 32 bytes, the public key is 32 bytes, and the keytype is
     /// Ed25519.
     /// </summary>
@@ -115,8 +115,8 @@ public class PemKeyParseTests
     }
 
     /// <summary>
-    /// PemKey.Parse on a wrong-passphrase decrypted blob fails earlier (PemParser
-    /// throws KeyfileAuthFailed on check1 != check2); this test confirms PemKey
+    /// SshPemKey.Parse on a wrong-passphrase decrypted blob fails earlier (SshPemParser
+    /// throws KeyfileAuthFailed on check1 != check2); this test confirms SshPemKey
     /// never sees a bad blob.
     /// </summary>
     [Fact]
@@ -129,7 +129,7 @@ public class PemKeyParseTests
 
     /// <summary>
     /// The RSA public key blob from the OpenSshKey must round-trip via
-    /// PemKey.Parse: re-encode the parsed n/e as a public blob
+    /// SshPemKey.Parse: re-encode the parsed n/e as a public blob
     /// [string "ssh-rsa"][string e][string n] and compare to the .pub file blob.
     /// Validates the n/e extraction order (n first in private blob, e second;
     /// but the public blob has e first, n second).

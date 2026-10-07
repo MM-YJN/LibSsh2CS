@@ -310,32 +310,6 @@ internal sealed class UnixSocketAgentTransport : IAgentTransport
     }
 
     /// <summary>
-    /// Reads exactly <paramref name="count"/> bytes, looping until the buffer
-    /// is full. Throws <see cref="SshException"/> on socket error or
-    /// premature EOF.
-    /// </summary>
-    [Obsolete("TODO: Optimize")]
-    private static async Task<byte[]> ReadExactAsync(Socket socket, int count, CancellationToken cancellationToken)
-    {
-        byte[] buffer = new byte[count];
-        int totalRead = 0;
-        while (totalRead < count)
-        {
-            int read = await socket.ReceiveAsync(buffer.AsMemory(totalRead), SocketFlags.None, cancellationToken)
-                .ConfigureAwait(false);
-            if (read == 0)
-            {
-                throw new SshException(SshErrorCode.SocketRecv,
-                    $"SSH agent closed the connection (read {totalRead} of {count} expected bytes)");
-            }
-
-            totalRead += read;
-        }
-
-        return buffer;
-    }
-
-    /// <summary>
     /// Reads exactly <paramref name="buffer.Length"/> bytes, looping until the buffer
     /// is full. Throws <see cref="SshException"/> on socket error or
     /// premature EOF.

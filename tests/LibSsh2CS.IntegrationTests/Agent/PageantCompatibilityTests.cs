@@ -41,9 +41,8 @@ namespace LibSsh2CS.IntegrationTests.Agent;
 /// and a <c>REQUEST_IDENTITIES</c> round trip crosses real cross-process
 /// <c>WM_COPYDATA</c> marshalling and a real shared-mapping hand-off. No key
 /// material is involved: the fixture Pageant starts with an empty key list, so
-/// nothing here can leak a key into anything. Sign coverage needs an
-/// unencrypted <c>.ppk</c> fixture loaded on the command line; see the note in
-/// the repository's development docs before adding one.
+/// nothing here can leak a key into anything. Sign coverage would need an
+/// unencrypted <c>.ppk</c> fixture loaded on the command line.
 /// </para>
 /// </remarks>
 [SupportedOSPlatform("windows")]

@@ -161,7 +161,7 @@ public class SshChannelAuthAgentTests
     [Fact]
     public async Task RequestAuthAgentAsync_AfterClose_ThrowsChannelClosed()
     {
-        // The _localClose guard lives in SendChannelRequestAsync (3.6.2 hardening).
+        // The _localClose guard lives in SendChannelRequestAsync.
         using var h = new ChannelTestHarness();
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 9);
 

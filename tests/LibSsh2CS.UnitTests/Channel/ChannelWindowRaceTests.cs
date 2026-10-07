@@ -121,7 +121,7 @@ public class ChannelWindowRaceTests
         await h.ServerWriter.WriteAsync(batch, ct);
 
         Task finished = await Task.WhenAny(readTask, Task.Delay(15000, ct));
-        Assert.True(readTask.IsCompleted, "Reader hung — lost wakeup or stuck books (H-1).");
+        Assert.True(readTask.IsCompleted, "Reader hung — lost wakeup or stuck books.");
         await readTask;
 
         // Books + integrity.
@@ -215,7 +215,7 @@ public class ChannelWindowRaceTests
 
         Task finished = await Task.WhenAny(writeTask, Task.Delay(30000, ct));
         Assert.True(writeTask.IsCompleted,
-            $"Write hung — lost WINDOW_ADJUST increment (H-1); window={chA.OutboundWindow}.");
+            $"Write hung — lost WINDOW_ADJUST increment; window={chA.OutboundWindow}.");
         await writeTask;
         await WithTimeoutAsync(serverTask, TimeSpan.FromSeconds(15), "mock server stalled", ct);
 

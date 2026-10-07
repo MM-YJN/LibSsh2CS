@@ -8,9 +8,9 @@ namespace LibSsh2CS.UnitTests.Transport;
 
 /// <summary>
 /// Concurrency tests for <see cref="PacketWriter"/>: verifies that the
-/// <see cref="SemaphoreSlim"/> added in increment 3.6.1 correctly serializes
+/// <see cref="SemaphoreSlim"/> correctly serializes
 /// concurrent <see cref="PacketWriter.WritePacketAsync"/> calls. These exercise
-/// the multi-channel cooperative-pumper invariant (increment 3.6.2+) that two
+/// the multi-channel cooperative-pumper invariant that two
 /// channel writes fired from independent tasks must produce two distinct,
 /// well-formed, on-wire packets — never corrupted interleavings.
 /// </summary>
@@ -269,9 +269,9 @@ public class PacketWriterConcurrencyTests
     // ── 6. SetOutboundKeys vs concurrent WritePacketAsync ────────────────
 
     /// <summary>
-    /// Asserts that <see cref="PacketWriter.SetOutboundKeys"/> IS locked against
-    /// <see cref="PacketWriter.WritePacketAsync"/> (3.6.2-fix): a key swap
-    /// racing with a write cannot corrupt cipher state. The original 3.6.1
+    /// Asserts that <see cref="PacketWriter.SetOutboundKeysAsync"/> IS locked against
+    /// <see cref="PacketWriter.WritePacketAsync"/>: a key swap
+    /// racing with a write cannot corrupt cipher state. The original
     /// design left SetOutboundKeys unlocked on the (incorrect) assumption that
     /// the rekey flow was already serialized with channel writes; that was wrong
     /// because WritePacketAsync only takes the writer lock, never the pump-lock.

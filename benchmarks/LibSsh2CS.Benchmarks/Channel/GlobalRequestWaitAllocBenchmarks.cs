@@ -12,7 +12,7 @@ namespace LibSsh2CS.Benchmarks.Channel;
 /// per-request reply <see cref="TaskCompletionSource{TResult}"/>, and one
 /// cooperative pump batch, whose typed wait constructs the deadline scope
 /// (linked <see cref="CancellationTokenSource"/> + <see cref="ITimer"/>) under
-/// test. Covers the router-side half of the Tier-2 wait machinery and the
+/// test. Covers the router-side half of the typed-wait machinery and the
 /// global-request payload allocation.
 /// </summary>
 /// <remarks>

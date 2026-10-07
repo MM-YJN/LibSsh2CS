@@ -30,7 +30,7 @@ internal sealed record ExtInfo
 {
     /// <summary>The <c>server-sig-algs</c> extension value split on commas, or
     /// an empty array if the server did not advertise it. Used by
-    /// <c>UserAuth</c> to pick the strongest RSA-SHA2 variant the server
+    /// <see cref="SshUserAuth"/> to pick the strongest RSA-SHA2 variant the server
     /// accepts (parity with <c>userauth.c:1410-1440</c>).</summary>
     public required string[] ServerSignatureAlgorithms { get; init; }
 
@@ -83,7 +83,7 @@ internal sealed record ExtInfo
             if (name == "server-sig-algs")
             {
                 // The value is a UTF-8 comma-separated algorithm name-list
-                // (RFC 8308 §3.1). Split now so UserAuth can index it directly.
+                // (RFC 8308 §3.1). Split now so <see cref="SshUserAuth"/> can index it directly.
                 string algList = System.Text.Encoding.UTF8.GetString(value);
                 serverSigAlgs = algList.Length == 0 ? [] : algList.Split(',');
             }

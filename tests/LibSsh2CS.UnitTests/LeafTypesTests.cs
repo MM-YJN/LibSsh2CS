@@ -1,7 +1,7 @@
 namespace LibSsh2CS.UnitTests;
 
 /// <summary>
-/// Smoke tests for the leaf types delivered in Phase 0.
+/// Smoke tests for the leaf types.
 /// </summary>
 public class LeafTypesTests
 {
@@ -86,7 +86,7 @@ public class LeafTypesTests
     [Fact]
     public void HostKeyType_IncludesAllMandatoryModernAlgorithms()
     {
-        // Phase 1.2 scope: rsa-sha2-256 and rsa-sha2-512 must be representable
+        // rsa-sha2-256 and rsa-sha2-512 must be representable
         // (OpenSSH 8.2+ disables ssh-rsa by default).
         Assert.True(Enum.IsDefined(SshHostKeyType.RsaSha256));
         Assert.True(Enum.IsDefined(SshHostKeyType.RsaSha512));

@@ -3,12 +3,13 @@ using Microsoft.Extensions.Time.Testing;
 namespace LibSsh2CS.UnitTests;
 
 /// <summary>
-/// Increment 3.4.2 — <see cref="RekeyPolicy"/> defaults, <see cref="SshSession"/>
+/// <see cref="RekeyPolicy"/> defaults, <see cref="SshSession"/>
 /// rekey surface (policy/counter/time-elapsed properties), and
 /// <see cref="TimeProvider"/> constructor injection. Post-handshake counter
-/// propagation and timestamp behavior are exercised by 3.4.5 (where the
-/// rekey is actually driven through <see cref="MockSshServer"/>) and 3.4.6
-/// (end-to-end under load). Here we verify the API surface and defaults.
+/// propagation and timestamp behavior are exercised by the full-session
+/// integration tests (where the rekey is actually driven through
+/// <see cref="MockSshServer"/>) and the under-load tests. Here we verify the
+/// API surface and defaults.
 /// </summary>
 public class RekeyPolicyTests
 {
@@ -121,12 +122,13 @@ public class RekeyPolicyTests
     public void SshSession_ElapsedSinceHandshake_AdvancesWithTimeProvider()
     {
         // We can't fully verify ElapsedSinceHandshake after handshake without a
-        // real handshake (covered in 3.4.5/3.4.6). But we CAN verify the
+        // real handshake (covered by RekeyIntegrationTests/RekeyUnderLoadTests).
+        // But we CAN verify the
         // TimeProvider.Advance is reflected by constructing a session, faking
         // the handshake-completed state via the ElapsedSinceHandshake property's
         // guard. The guard returns Zero before handshake; once a handshake
         // completes, the elapsed grows with the TimeProvider. The post-handshake
-        // path is exercised by RekeyIntegrationTests (3.4.5).
+        // path is exercised by RekeyIntegrationTests.
         var fake = new FakeTimeProvider();
         var s = new SshSession(fake);
         fake.Advance(TimeSpan.FromHours(2));

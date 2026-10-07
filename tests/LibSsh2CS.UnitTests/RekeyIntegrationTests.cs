@@ -8,7 +8,7 @@ using Microsoft.Extensions.Time.Testing;
 namespace LibSsh2CS.UnitTests;
 
 /// <summary>
-/// Increment 3.4.5 — full integration tests that exercise the rekey auto-trigger
+/// Full integration tests that exercise the rekey auto-trigger
 /// and server-initiated rekey through a real <see cref="SshSession.HandshakeAsync"/>
 /// cycle driven by <see cref="MockSshServer"/>. Covers:
 /// <list type="bullet">
@@ -29,7 +29,7 @@ namespace LibSsh2CS.UnitTests;
 /// transport). For rekey integration, we install a counting rekey callback on
 /// the session's <see cref="PacketQueue.RekeyTriggerAsync"/> to verify invocation
 /// without actually driving a second KEX (which would require a second mock KEX
-/// exchange — out of scope for 3.4.5; covered by 3.4.6's cleartext harness).
+/// exchange — out of scope here; covered by the under-load cleartext harness).
 /// </remarks>
 public class RekeyIntegrationTests
 {

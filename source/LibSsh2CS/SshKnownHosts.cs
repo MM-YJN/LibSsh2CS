@@ -626,7 +626,7 @@ public sealed class SshKnownHosts : IDisposable
     private static SshKnownHostKeyType MatchKeyTypeName(ReadOnlySpan<char> name)
         // The C code uses strncmp with the name length; for C#, exact string
         // equality is equivalent since nameSpan is already the right length.
-        // Delegates to the shared HostKeyTypeRegistry (single source of truth
+        // Delegates to the shared SshHostKeyTypeRegistry (single source of truth
         // for wire-name ↔ enum mapping) — parity-preserving refactor.
         => SshHostKeyTypeRegistry.LookupByWireName(name)?.Known
             ?? SshKnownHostKeyType.Unknown;
@@ -886,7 +886,7 @@ public sealed class SshKnownHosts : IDisposable
     /// </exception>
     private static string? ResolveKeyTypeName(SshKnownHostEntry entry)
     {
-        // Delegates the known-types branch to the shared HostKeyTypeRegistry.
+        // Delegates the known-types branch to the shared SshHostKeyTypeRegistry.
         // The Unknown branch stays local — it carries the KeyTypeName fallback
         // + the parity-pinned "no name → MethodNotSupported throw" from
         // knownhost.c:766-770 (libssh2's "claim it's base64 for strcmp

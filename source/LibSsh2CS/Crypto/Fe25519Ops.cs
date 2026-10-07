@@ -28,7 +28,10 @@ namespace LibSsh2CS.Crypto;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Direct C# port of libsodium's <c>crypto_core/ed25519/ref10/fe_25_5/*.c</c>. The
+/// Direct C# port of libsodium's ref10 field arithmetic (the inline
+/// <c>fe25519_*</c> functions in <c>include/sodium/private/ed25519_ref10_fe_25_5.h</c>,
+/// <c>crypto_core/ed25519/ref10/fe_25_5/fe.h</c> for byte conversion, and
+/// <c>crypto_core/ed25519/ref10/ed25519_ref10.c</c> for inversion). The
 /// algorithm is identical to the int32-limb libsodium version; we use 64-bit limbs
 /// throughout (the <see cref="long"/> C# type) for cleaner arithmetic with no
 /// narrowing step. The carry chain keeps limbs bounded exactly as in libsodium.
@@ -40,12 +43,15 @@ namespace LibSsh2CS.Crypto;
 /// and all-ones when <c>bit == 1</c>. Limb combinations use <c>(x &amp; mask) | (y &amp; ~mask)</c>.
 /// </para>
 /// <para>
-/// libsodium C files replaced:
-/// <c>fe_25_5/fe.h</c>, <c>fe_neg.c</c>, <c>fe_add.c</c>, <c>fe_sub.c</c>,
-/// <c>fe_mul.c</c>, <c>fe_sq.c</c>, <c>fe_sq2.c</c>, <c>fe_mul121666.c</c>,
-/// <c>fe_invert.c</c>, <c>fe_pow22523.c</c>, <c>fe_tobytes.c</c>, <c>fe_frombytes.c</c>,
-/// <c>fe_isnonzero.c</c>, <c>fe_isnegative.c</c>, <c>fe_cmov.c</c>, <c>fe_0.c</c>,
-/// <c>fe_1.c</c>, <c>fe_copy.c</c>.
+/// libsodium functions replaced:
+/// <c>fe25519_frombytes</c>, <c>fe25519_reduce</c>, <c>fe25519_tobytes</c>
+/// (<c>fe_25_5/fe.h</c>); the inline arithmetic in
+/// <c>ed25519_ref10_fe_25_5.h</c> (<c>fe25519_add</c>, <c>fe25519_sub</c>,
+/// <c>fe25519_neg</c>, <c>fe25519_mul</c>, <c>fe25519_sq</c>, <c>fe25519_sq2</c>,
+/// <c>fe25519_mul32</c>, <c>fe25519_cmov</c>, <c>fe25519_cswap</c>,
+/// <c>fe25519_copy</c>, <c>fe25519_iszero</c>, <c>fe25519_isnegative</c>,
+/// <c>fe25519_0</c>, <c>fe25519_1</c>); and <c>fe25519_invert</c> /
+/// <c>fe25519_pow22523</c> (<c>ed25519_ref10.c</c>).
 /// </para>
 /// </remarks>
 internal static class Fe25519Ops
@@ -369,9 +375,9 @@ internal static class Fe25519Ops
     }
 
     /// <summary>
-    /// Field squaring with factor 2: <c>h = 2 * f^2 (mod p)</c>. Port of <c>fe_sq2.c</c>.
+    /// Field squaring with factor 2: <c>h = 2 * f^2 (mod p)</c>. Port of <c>fe25519_sq2</c>.
     /// Same as <see cref="Sq"/> with an additional doubling of the products; used by
-    /// X25519 Montgomery ladder where 2*squares appear frequently.
+    /// the Ed25519 point-doubling path (<c>ge25519_p2_dbl</c>).
     /// </summary>
     public static void Sq2(out Fe h, in Fe f)
     {
@@ -381,7 +387,8 @@ internal static class Fe25519Ops
 
     /// <summary>
     /// Multiply by the small constant 121666 (the X25519 ladder constant a24 + 1).
-    /// Port of <c>fe_mul121666.c</c>.
+    /// Port of the <c>fe25519_mul32(z3, tmp1, 121666)</c> step in libsodium's
+    /// X25519 ladder (<c>x25519_ref10.c</c>).
     /// </summary>
     public static void Mul121666(out Fe h, in Fe f)
     {
@@ -402,7 +409,7 @@ internal static class Fe25519Ops
     /// <summary>
     /// The standard ref10 2-pass carry chain. Takes the raw (post-multiplication) limb
     /// values and produces a normalized <see cref="Fe"/> whose limbs are bounded to
-    /// roughly [-2^25, 2^25]. Port of the carry chain at the end of <c>fe_mul.c</c>.
+    /// roughly [-2^25, 2^25]. Port of the carry chain at the end of <c>fe25519_mul</c>.
     /// </summary>
     /// <remarks>
     /// The "rounding bias" of <c>1&lt;&lt;25</c> / <c>1&lt;&lt;24</c> makes the arithmetic-shift
@@ -480,7 +487,7 @@ internal static class Fe25519Ops
     /// Decodes a 32-byte little-endian value into a field element. The high bit of
     /// byte 31 (bit 255) is masked off (it cannot be represented in the standard
     /// limb layout — callers that need it, like wrapping a raw scalar, do so by
-    /// adding 19 to the result after this call). Port of <c>fe_frombytes.c</c>.
+    /// adding 19 to the result after this call). Port of <c>fe25519_frombytes</c>.
     /// </summary>
     public static void FromBytes(out Fe h, ReadOnlySpan<byte> s)
     {
@@ -517,7 +524,7 @@ internal static class Fe25519Ops
 
     /// <summary>
     /// Encodes a field element to its canonical 32-byte little-endian form (fully
-    /// reduced mod p). Port of <c>fe_tobytes.c</c>.
+    /// reduced mod p). Port of <c>fe25519_tobytes</c>.
     /// </summary>
     public static void ToBytes(Span<byte> s, in Fe h)
     {
@@ -591,7 +598,7 @@ internal static class Fe25519Ops
     /// <para>
     /// The carry chain uses the SUPERCOP ref10 interleaved order (carry all
     /// 26-bit limbs, then all 25-bit limbs, then 26-bit again, etc.) — this is
-    /// what the original ref10 <c>fe_tobytes.c</c> uses, NOT a linear chain. We
+    /// what the original SUPERCOP ref10 <c>fe_tobytes.c</c> uses, NOT a linear chain. We
     /// use the plain <c>h &gt;&gt; radix</c> shift (no rounding bias), which is a no-op
     /// for canonical inputs (limbs in <c>[0, 2^radix)</c>) and correctly normalizes
     /// wide-range inputs (limbs in roughly <c>[-2^25, 2^25]</c> after Mul/Sq output).
@@ -622,7 +629,7 @@ internal static class Fe25519Ops
         long h8 = h._l8;
         long h9 = h._l9;
 
-        // Libsodium ref10's fe_tobytes q-chain (fe_tobytes.c). The
+        // Libsodium ref10's fe25519_reduce q-chain (fe_25_5/fe.h). The
         // previous SUPERCOP interleaved carry chain + h−p borrow selection kept
         // the exact (possibly negative-limb) representation whenever the value
         // was below p, so a sparse input with one extreme negative limb (e.g.
@@ -701,7 +708,7 @@ internal static class Fe25519Ops
 
     /// <summary>
     /// Returns 1 if <paramref name="f"/> is the zero element, 0 otherwise. Constant-time.
-    /// Port of <c>fe_isnonzero.c</c> (inverted sense).
+    /// Port of <c>fe25519_iszero</c>.
     /// </summary>
     public static int IsZero(in Fe f)
     {
@@ -722,7 +729,7 @@ internal static class Fe25519Ops
 
     /// <summary>
     /// Returns 1 if <paramref name="f"/> is "negative" (odd parity in canonical encoding),
-    /// 0 otherwise. Constant-time. Port of <c>fe_isnegative.c</c>.
+    /// 0 otherwise. Constant-time. Port of <c>fe25519_isnegative</c>.
     /// </summary>
     public static int IsNegative(in Fe f)
     {
@@ -738,7 +745,7 @@ internal static class Fe25519Ops
     /// <summary>
     /// Conditional move: if <paramref name="b"/> is 1, sets <paramref name="f"/> to
     /// <paramref name="g"/>; if <paramref name="b"/> is 0, leaves <paramref name="f"/>
-    /// unchanged. Constant-time. Port of <c>fe_cmov.c</c>.
+    /// unchanged. Constant-time. Port of <c>fe25519_cmov</c>.
     /// </summary>
     public static void CMove(ref Fe f, in Fe g, int b)
     {
@@ -948,7 +955,7 @@ internal static class Fe25519Ops
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // Small helpers for byte loading (fe_frombytes.c uses these)
+    // Small helpers for byte loading (fe25519_frombytes uses these)
     // ════════════════════════════════════════════════════════════════════════
 
     /// <summary>Little-endian 4-byte load from <paramref name="s"/> at the given offset.</summary>

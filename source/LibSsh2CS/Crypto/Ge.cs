@@ -26,7 +26,7 @@ namespace LibSsh2CS.Crypto;
 /// used by <see cref="Ge25519Ops"/> and <see cref="Ge25519ScalarMult"/>. Direct ports
 /// of the <c>ge25519_p1p1</c> / <c>ge25519_p2</c> / <c>ge25519_p3</c> /
 /// <c>ge25519_cached</c> / <c>ge25519_precomp</c> structs in libsodium's
-/// <c>crypto_core/ed25519/ref10/ed25519_ref10.h</c>.
+/// <c>include/sodium/private/ed25519_ref10.h</c>.
 /// </summary>
 /// <remarks>
 /// <para>

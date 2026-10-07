@@ -8,7 +8,7 @@ namespace LibSsh2CS.UnitTests.Session;
 /// <summary>
 /// ExtInfo.Parse tests — verifies the SSH_MSG_EXT_INFO (RFC 8308) parser
 /// extracts <c>server-sig-algs</c> correctly, the value that drives RSA-SHA2
-/// algorithm selection in UserAuth.
+/// algorithm selection in <see cref="SshUserAuth"/>.
 /// </summary>
 public class ExtInfoTests
 {

@@ -201,7 +201,7 @@ internal static class AgentProtocol
 
         // The response is: [14][string sig_blob]. The sig_blob itself contains
         // [string algoName][string rawSig]. The agent returns the full SSH
-        // signature blob, which is exactly what UserAuth.AppendSignature expects.
+        // signature blob, which is exactly what <c>SshUserAuth.AppendSignature</c> expects.
         return r.ReadBlob();
     }
 

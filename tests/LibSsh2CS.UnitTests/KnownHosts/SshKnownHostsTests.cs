@@ -6,19 +6,19 @@ using LibSsh2CS.Util;
 namespace LibSsh2CS.UnitTests.KnownHosts;
 
 /// <summary>
-/// Tests for <see cref="SshKnownHosts"/> Phase 3 increment 3.1.1: construction,
+/// Tests for <see cref="SshKnownHosts"/> construction,
 /// disposal, <see cref="SshKnownHosts.Add"/>, <see cref="SshKnownHosts.Delete"/>, and
 /// <see cref="SshKnownHosts.GetFirst"/>/<see cref="SshKnownHosts.GetNext"/> iteration.
 /// </summary>
 /// <remarks>
 /// <see cref="SshKnownHosts.Check"/> / <see cref="SshKnownHosts.ReadLine"/> /
-/// <see cref="SshKnownHosts.WriteLine"/> / file IO are delivered in subsequent
-/// increments; this file exercises only the storage layer.
+/// <see cref="SshKnownHosts.WriteLine"/> / file IO have their own test files;
+/// this file exercises only the storage layer.
 /// </remarks>
 public class SshKnownHostsTests
 {
     // SHA1 host hashes are arbitrary 20-byte values; salts are arbitrary too.
-    // Real parsing of <c>|1|salt|hash</c> lines lands in increment 3.1.4.
+    // Real parsing of <c>|1|salt|hash</c> lines is covered by the ReadLine tests.
     private static readonly byte[] s_sha1HashBytes = new byte[]
     {
         0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
@@ -33,7 +33,7 @@ public class SshKnownHostsTests
 
     private static readonly byte[] s_ed25519Key = new byte[]
     {
-        // 32-byte Ed25519 public key placeholder; real fixtures land in 3.1.4.
+        // 32-byte Ed25519 public key placeholder (storage-layer test).
         0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80,
         0x90, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0, 0x00,
         0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80,
@@ -92,7 +92,7 @@ public class SshKnownHostsTests
             comment: string.Empty);
 
         // Null means "no comment written"; empty means "trailing space written".
-        // WriteLine (increment 3.1.5) distinguishes them; here we just verify
+        // WriteLine preserves that distinction; here we just verify
         // empty round-trips through Add without being normalized to null.
         Assert.NotNull(entry.Comment);
         Assert.Equal(string.Empty, entry.Comment);

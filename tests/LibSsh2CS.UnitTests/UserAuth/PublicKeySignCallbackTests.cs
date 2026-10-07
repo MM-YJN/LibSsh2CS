@@ -3,12 +3,12 @@ using System.Buffers.Binary;
 namespace LibSsh2CS.UnitTests.UserAuth;
 
 /// <summary>
-/// Tests for the publickey sign-callback seam added in Phase 4 increment 4.1.
+/// Tests for the publickey sign-callback seam.
 /// Two surfaces:
 /// <list type="bullet">
 ///   <item><see cref="SshUserAuth.SelectSigningAlgorithm(SshSession, byte[])"/> —
 ///   algorithm-name derivation from an SSH wire-format public-key blob
-///   (parallels the existing <c>(SshSession, PemKey)</c> overload, but for the
+///   (parallels the existing <c>(SshSession, SshPemKey)</c> overload, but for the
 ///   agent path where only the public-key blob is available).</item>
 ///   <item><c>AuthenticateWithPublicKeyAsync(session, user, blob, signAsync,
 ///   ct)</c> — the new overload that drives the two-step publickey flow with an
@@ -16,7 +16,7 @@ namespace LibSsh2CS.UnitTests.UserAuth;
 ///   point).</item>
 /// </list>
 /// The full end-to-end sign path is verified live by
-/// <c>DockerAgentTests</c> (Phase 4 increment 4.5); these tests cover the
+/// <c>DockerAgentTests</c>; these tests cover the
 /// pieces that can be exercised without a handshaked session.
 /// </summary>
 public class PublicKeySignCallbackTests
@@ -232,7 +232,7 @@ public class PublicKeySignCallbackTests
     {
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         // We can't drive the full handshake in a unit test (that's covered by
-        // DockerAgentTests in 4.5). This test is a placeholder that documents
+        // DockerAgentTests). This test is a placeholder that documents
         // the contract: callers must pass a blob with at least 4 bytes (a valid
         // length-prefix). Real coverage of the post-EnsureReady path is the
         // live Docker gate.

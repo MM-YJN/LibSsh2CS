@@ -319,11 +319,11 @@ public class ChannelRouterTests
     }
 
     // NOTE: the window-full drop path (packet.c:1047-1058, InboundWindow <=
-    // read_avail) is deferred to 3.2.4. With the 3.2.1 fixed 2 MB inbound
-    // window it would need ~64 × 32 KB packets (and a multi-MB synchronous pipe
-    // write that deadlocks the Pipe pause-watermark). 3.2.4 makes the inbound
-    // window mutable (ReadAsync decrements it), so the drop path becomes
-    // trivially exercisable at small scale.
+    // read_avail) is covered at small scale in PooledPayloadTests
+    // (DropsAndTruncation_ClearWholePayload, "full window" case), rather than
+    // here: with the fixed 2 MB inbound window it would need ~64 × 32 KB
+    // packets (and a multi-MB synchronous pipe write that deadlocks the Pipe
+    // pause-watermark).
 
     // ── Reply-wait mode: routes interleaved channel packets ────────────────
 

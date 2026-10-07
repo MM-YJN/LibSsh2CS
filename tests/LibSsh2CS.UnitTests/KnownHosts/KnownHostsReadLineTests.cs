@@ -7,7 +7,7 @@ using LibSsh2CS.Util;
 namespace LibSsh2CS.UnitTests.KnownHosts;
 
 /// <summary>
-/// Tests for <see cref="SshKnownHosts.ReadLine"/> — Phase 3 increment 3.1.4.
+/// Tests for <see cref="SshKnownHosts.ReadLine"/>.
 /// </summary>
 /// <remarks>
 /// Exercises every branch of the OpenSSH known_hosts line parser:

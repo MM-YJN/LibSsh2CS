@@ -4,7 +4,7 @@ using LibSsh2CS.Transport;
 namespace LibSsh2CS.UnitTests.Transport;
 
 /// <summary>
-/// Tests for the Phase 1 increment-4 cipher adapters: registry lookup, per-cipher
+/// Tests for the cipher adapters: registry lookup, per-cipher
 /// metadata parity with <c>libssh2_priv.h</c>/<c>crypt.c</c>, and round-trip /
 /// chaining behaviour across all four framing families (AES-CBC, AES-CTR,
 /// AES-GCM, ChaCha20-Poly1305).

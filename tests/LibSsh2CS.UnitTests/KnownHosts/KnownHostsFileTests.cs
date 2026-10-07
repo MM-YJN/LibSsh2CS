@@ -6,7 +6,7 @@ namespace LibSsh2CS.UnitTests.KnownHosts;
 
 /// <summary>
 /// Tests for <see cref="SshKnownHosts.ReadFileAsync"/> and
-/// <see cref="SshKnownHosts.WriteFileAsync"/> — Phase 3 increment 3.1.6.
+/// <see cref="SshKnownHosts.WriteFileAsync"/>.
 /// </summary>
 /// <remarks>
 /// Exercises the file IO pipeline: <c>ReadFile</c> → <see cref="SshKnownHosts.ReadLine"/>

@@ -10,7 +10,7 @@ using Microsoft.Extensions.Time.Testing;
 namespace LibSsh2CS.UnitTests.Session;
 
 /// <summary>
-/// Phase 5.1 keepalive tests — verifies the caller-driven keepalive config
+/// Keepalive tests — verifies the caller-driven keepalive config
 /// state machine + wire-format parity with libssh2's <c>keepalive.c:45-101</c>.
 /// </summary>
 /// <remarks>
@@ -369,7 +369,7 @@ public class KeepAliveTests
     /// session under test to write into, paired with the underlying
     /// <see cref="Pipe"/> the test consumes to assert wire bytes. Mirrors the
     /// <see cref="ChannelTestHarness"/> pattern without the router (keepalive
-    /// is a session-level send, no router is needed for 5.1).
+    /// is a session-level send, no router is needed).
     /// </summary>
     private static (PacketWriter writer, Pipe pipe) MakeCleartextPipe()
     {

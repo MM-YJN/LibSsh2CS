@@ -1,10 +1,10 @@
 namespace LibSsh2CS.UnitTests.KnownHosts;
 
 /// <summary>
-/// Phase 3 increment 3.1.7: Preview of the Phase N
-/// <c>find_hostkey_preference</c> probing pattern. Mirrors
-/// <c>ssh_libssh2.c:523-587</c> in libgit2 — the SshTransport will use this
-/// exact <see cref="SshKnownHosts.Check(string, int, byte[], SshKnownHostKeyType)"/>
+/// Tests for the known-hosts hostkey-preference probe pattern. Mirrors
+/// <c>find_hostkey_preference</c> (<c>ssh_libssh2.c:500-521</c>) in libgit2 — a
+/// caller (such as LibGit2CS's <c>SshTransport</c>) uses this exact
+/// <see cref="SshKnownHosts.Check(string, int, byte[], SshKnownHostKeyType)"/>
 /// call sequence to build the hostkey method preference string before
 /// <c>SshSession.HandshakeAsync</c>.
 /// </summary>
@@ -19,11 +19,10 @@ namespace LibSsh2CS.UnitTests.KnownHosts;
 /// that host + key type combination.
 /// </para>
 /// <para>
-/// This test does <em>not</em> implement the Phase N wiring — it only verifies
-/// that <see cref="SshKnownHosts"/> supports the probe pattern correctly. When
-/// Phase N ships, <c>SshTransport</c> will replicate this loop verbatim, then
-/// feed the resulting preference string into
-/// <c>session[MethodType.HostKey] = prefs</c> before handshake.
+/// These tests exercise the probe pattern against <see cref="SshKnownHosts"/>
+/// directly — the same loop the consumer replicates inline, feeding the
+/// resulting preference string into the session's hostkey
+/// method-preference indexer before handshake.
 /// </para>
 /// </remarks>
 public class FindHostkeyPreferenceTests
@@ -55,7 +54,7 @@ public class FindHostkeyPreferenceTests
         known.Add("git.example.com", null, s_ed25519Key, SshKnownHostKeyType.Ed25519, SshKnownHostFormat.Plain);
         known.Add("git.example.com", null, s_rsaKey, SshKnownHostKeyType.SshRsa, SshKnownHostFormat.Plain);
 
-        // Run the probe — this is the exact loop Phase N's SshTransport will use.
+        // Run the probe — the same loop the caller's transport uses.
         List<string> prefs = FindHostkeyPreferences(known, "git.example.com", 22);
 
         // Expected: ed25519 first, then ecdsa types are absent (not in known_hosts),
@@ -95,7 +94,7 @@ public class FindHostkeyPreferenceTests
 
     /// <summary>
     /// A completely unknown host should produce an empty preference list.
-    /// Phase N's SshTransport will skip setting a hostkey preference in this
+    /// The caller's transport will skip setting a hostkey preference in this
     /// case (letting the server pick), so the known_hosts check happens later
     /// via the verifyHostKeyAsync callback.
     /// </summary>
@@ -162,7 +161,7 @@ public class FindHostkeyPreferenceTests
         Assert.Equal("ssh-ed25519", string.Join(",", prefs));
     }
 
-    // ── The probe loop itself (Phase N will inline this into SshTransport) ──
+    // ── The probe loop itself (the caller inlines this before handshake) ──
 
     /// <summary>
     /// Replicates libgit2's <c>find_hostkey_preference</c> probe loop. For each

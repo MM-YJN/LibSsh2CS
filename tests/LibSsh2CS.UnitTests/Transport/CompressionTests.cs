@@ -5,7 +5,7 @@ using LibSsh2CS.Transport;
 namespace LibSsh2CS.UnitTests.Transport;
 
 /// <summary>
-/// Tests for the Phase 1 increment-4 compression adapters: registry, metadata
+/// Tests for the compression adapters: registry, metadata
 /// parity with <c>comp.c</c>, the <c>none</c> passthrough, and zlib (RFC 1950)
 /// round-trip including cross-packet dictionary persistence.
 /// </summary>

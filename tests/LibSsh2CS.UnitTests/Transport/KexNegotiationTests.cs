@@ -5,8 +5,8 @@ namespace LibSsh2CS.UnitTests.Transport;
 /// <summary>
 /// Tests for <see cref="KeyExchange.Negotiate"/>: the client-preference-first
 /// matching rule, the AES-GCM MAC override, strict-KEX detection, and the
-/// no-overlap failure path. These pin the parity-critical behaviors documented
-/// in the libssh2 <c>kex_agree_*</c> audit (<c>kex.c:3598-4040</c>).
+/// no-overlap failure path. These pin the parity-critical behaviors of
+/// libssh2's <c>kex_agree_*</c> functions (<c>kex.c:3598-4040</c>).
 /// </summary>
 /// <remarks>
 /// <para>

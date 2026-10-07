@@ -69,7 +69,7 @@ public static class SshAgentExtensions
 
         // Bind (agent, identity) into a closure; agent.Identity is consulted at
         // sign time. The algorithm name comes from the callback's `algoName`
-        // argument (computed by UserAuth via SelectSigningAlgorithm), NOT from
+        // argument (computed by <see cref="SshUserAuth"/> via <c>SelectSigningAlgorithm</c>), NOT from
         // a pre-computed value here.
         async Task<byte[]> SignAsync(byte[] data, string algorithmName, CancellationToken ct)
         {

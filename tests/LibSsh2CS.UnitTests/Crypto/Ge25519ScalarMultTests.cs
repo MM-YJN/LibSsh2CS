@@ -7,8 +7,7 @@ namespace LibSsh2CS.UnitTests.Crypto;
 
 /// <summary>
 /// Cross-checks <see cref="Ge25519ScalarMult"/> against the BigInteger point-multiplication
-/// oracle and the RFC 8032 §7.1 known-answer vectors. The BigInteger oracle is itself
-/// validated by the existing Ed25519Tests / Ed25519SignTests.
+/// oracle and the RFC 8032 §7.1 known-answer vectors.
 /// </summary>
 public class Ge25519ScalarMultTests
 {
@@ -21,8 +20,8 @@ public class Ge25519ScalarMultTests
         Convert.FromHexString("5866666666666666666666666666666666666666666666666666666666666666");
 
     // ════════════════════════════════════════════════════════════════════════
-    // BigInteger point oracle — same shape as in Ge25519OpsTests. Will be
-    // removed in H.6 when Ed25519.cs is rewritten.
+    // BigInteger point oracle — same shape as in Ge25519OpsTests, used to
+    // cross-check Base / ScalarMult against the reference point math.
     // ════════════════════════════════════════════════════════════════════════
 
     private readonly struct BigPoint

@@ -78,7 +78,7 @@ public class ChannelFlowTests
         // ── 5. Close ───────────────────────────────────────────────────────
         Task closeTask = ch.DisposeAsync().AsTask();
 
-        // Server reads EOF then CLOSE (D1: close sends EOF-if-not-sent first).
+        // Server reads EOF then CLOSE (close sends EOF-if-not-sent first).
         using RawPacket receivedPacket1 = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);
         Assert.Equal(PacketType.ChannelEof, receivedPacket1.Type);
         using RawPacket receivedPacket2 = await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken);

@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 namespace LibSsh2CS.IntegrationTests.Session;
 
 /// <summary>
-/// Phase 3.5 live exec integration tests: runs a real OpenSSH server in Docker
+/// Live exec integration tests: runs a real OpenSSH server in Docker
 /// (via the shared <see cref="AlpineNoKeySshImageFixture"/> assembly fixture)
 /// and exercises the full channel lifecycle — <see cref="SshSession.OpenSessionAsync"/>,
 /// <see cref="SshChannel.ExecAsync"/>, <see cref="SshChannel.ReadAsync"/>,
@@ -19,12 +19,12 @@ namespace LibSsh2CS.IntegrationTests.Session;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The cleartext mock-pipe tests in <c>Channel/</c> (increments 3.2/3.3) cover
+/// The cleartext mock-pipe tests in <c>Channel/</c> cover
 /// the channel protocol byte-exactly against canned fixtures; these tests
 /// confirm wire parity against a live OpenSSH server, including the read-loop
 /// + automatic inbound window-adjust across multiple <c>CHANNEL_DATA</c>
 /// packets, the <see cref="SshChannel.WriteAsync"/> outbound path, and (in the
-/// rekey variant) the increment-3.4 auto-trigger firing mid-transfer.
+/// rekey variant) the auto-trigger firing mid-transfer.
 /// </para>
 /// <para>
 /// <b>Gating:</b> <see cref="SshImageFixtureBase.StartContainerAsync"/>
@@ -154,8 +154,8 @@ public sealed class DockerExecTests : IDisposable
     }
 
     /// <summary>
-    /// Live end-to-end coverage of <see cref="SshChannel.SignalAsync(SshSignal, CancellationToken)"/>
-    /// (increment 3.6.2): exec <c>sleep 30</c>, send <c>SIGTERM</c>, await the
+    /// Live end-to-end coverage of <see cref="SshChannel.SignalAsync(SshSignal, CancellationToken)"/>:
+    /// exec <c>sleep 30</c>, send <c>SIGTERM</c>, await the
     /// close handshake, then assert <see cref="SshChannel.ExitSignal"/> captured
     /// the server's <c>exit-signal "TERM"</c> message. Confirms wire parity
     /// against real OpenSSH — the cleartext mock-pipe test
@@ -211,7 +211,7 @@ public sealed class DockerExecTests : IDisposable
 
     /// <summary>
     /// With a tiny <see cref="RekeyPolicy"/> (<c>MaxBytes = 1024</c>) set before
-    /// handshake, the increment-3.4 auto-trigger must fire during a multi-KB
+    /// handshake, the rekey auto-trigger must fire during a multi-KB
     /// exec transfer and complete without dropping the session. The transfer
     /// must still produce the full expected output and a zero exit status.
     /// Asserts <c>session.RekeyCount &gt;= 1</c> to confirm the rekey actually
@@ -395,13 +395,13 @@ public sealed class DockerExecTests : IDisposable
         return (Encoding.UTF8.GetString(ms.ToArray()), exit);
     }
 
-    // ── 3.6 live concurrent-channels integration ─────────────────────────────
+    // ── live concurrent-channels integration ─────────────────────────────────
 
     /// <summary>
     /// Two channels on the same session run <c>exec</c> concurrently — one
     /// <c>seq 1 100</c>, the other <c>seq 1 50</c>. Both outputs must complete
     /// with the correct number of lines, in order, with exit status 0. This is
-    /// the increment-3.6 live integration check: the cooperative pumper must
+    /// the live integration check: the cooperative pumper must
     /// route each channel's DATA + EOF + exit-status correctly under real
     /// network packet timing, with both channels' <c>ReadAsync</c> calls
     /// outstanding simultaneously.

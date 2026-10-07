@@ -10,17 +10,15 @@ using Microsoft.Extensions.Time.Testing;
 namespace LibSsh2CS.IntegrationTests.Session;
 
 /// <summary>
-/// Phase 5.7 live integration tests for keepalive + direct-tcpip over a real
-/// OpenSSH server in Docker. Verifies wire parity of the Phase 5.1–5.6
-/// machinery against a live sshd:
+/// Live integration tests for keepalive + direct-tcpip over a real
+/// OpenSSH server in Docker. Verifies wire parity of the keepalive / global
+/// request / listener / direct-tcpip machinery against a live sshd:
 /// <list type="bullet">
-/// <item><see cref="SshSession.SendKeepAliveAsync"/> with wantReply=true
-/// completes against a real server (exercises the global-request reply
-/// dispatch + the cooperative pump integration).</item>
-/// <item><see cref="SshSession.SendKeepAliveAsync"/> with wantReply=false
-/// exercises the fire-and-forget <see cref="KeepAlive.BuildPayload(false)"/>
-/// send path (<c>SshSession.cs:891</c>) that the wantReply=true test leaves
-/// dark.</item>
+/// <item><see cref="SshSession.SendKeepAliveAsync"/> with want_reply=1 completes
+/// against a real server and returns the configured interval.</item>
+/// <item><see cref="SshSession.SendKeepAliveAsync"/> with want_reply=0
+/// covers the other want-reply byte through the same fire-and-forget send
+/// path (no reply is expected, so the send must not stall waiting for one).</item>
 /// <item><see cref="SshSession.OpenDirectTcpIpAsync"/> opens a
 /// <c>"direct-tcpip"</c> channel to the container's loopback SSH port; the
 /// test reads the server's SSH banner back through the tunnel.</item>
@@ -68,16 +66,15 @@ public sealed class DockerForwardTests : IDisposable
 
         session.ConfigureKeepAlive(wantReply: true, intervalSeconds: 30);
 
-        // First call: interval hasn't elapsed (session just connected), so this
-        // should return the remaining time without sending. But because the
-        // session was JUST constructed, elapsed ≈ 0 and remaining ≈ 30.
+        // First call: the never-sent sentinel makes it always send
+        // (parity keepalive.c:71), so the full configured interval (30) is
+        // returned.
         int first = await session.SendKeepAliveAsync(cancellationToken);
         Assert.InRange(first, 25, 30);
 
-        // Force a send by reconfiguring with interval=1 (the libssh2 quirk
-        // rewrites this to 2). Then immediately call SendKeepAliveAsync — the
-        // elapsed time is now > 2 seconds since the session was constructed, so
-        // it should actually send and return the interval.
+        // Reconfigure with interval=1 (the libssh2 quirk rewrites this to 2).
+        // A send just completed, so the elapsed gate does not fire and the call
+        // returns the remaining time (2) instead of resending.
         session.ConfigureKeepAlive(wantReply: true, intervalSeconds: 1);
         int sent = await session.SendKeepAliveAsync(cancellationToken);
         Assert.Equal(2, sent);   // interval rewritten 1→2 per keepalive.c:50-51
@@ -91,14 +88,11 @@ public sealed class DockerForwardTests : IDisposable
     /// <summary>
     /// Caller-driven keepalive with wantReply=false against a live server.
     /// Mirrors <see cref="KeepAlive_WantReplyTrue_LiveServer_RespondsAndReturnsInterval"/>
-    /// but exercises the fire-and-forget send path
-    /// (<see cref="KeepAlive.BuildPayload(false)"/> →
-    /// <see cref="Transport.PacketWriter.WritePacketAsync"/>) that the
-    /// wantReply=true test leaves dark. The server does NOT reply to a
-    /// want_reply=0 keepalive (the packet is fire-and-forget per
-    /// <c>keepalive.c:74-89</c>), so the send must complete without hanging
-    /// and return the configured interval. Lights up
-    /// <see cref="KeepAlive.BuildPayload(bool)"/> (0% → covered) and the
+    /// but sends <c>want_reply=0</c> through the fire-and-forget
+    /// <see cref="Transport.PacketWriter.WriteGlobalRequestPacketAsync"/> path.
+    /// The server does NOT reply to a want_reply=0 keepalive (the packet is
+    /// fire-and-forget per <c>keepalive.c:74-89</c>), so the send must complete
+    /// without hanging and return the configured interval. Lights up the
     /// <c>wantReply=false</c> arm of <see cref="SshSession.SendKeepAliveAsync"/>
     /// (26% → covered).
     /// </summary>
@@ -106,14 +100,14 @@ public sealed class DockerForwardTests : IDisposable
     /// <para>
     /// <b>Why <see cref="FakeTimeProvider"/> (inline connect).</b> The session's
     /// keepalive elapsed-gate compares <c>now - _lastKeepaliveTimestampTicks</c>
-    /// against the configured interval; the baseline is captured at construction
-    /// (<c>SshSession.cs:145</c>). A real <see cref="SshSession"/> constructed
-    /// milliseconds before <see cref="SshSession.SendKeepAliveAsync"/> has
-    /// elapsed ≈ 0, so the send branch (<c>SshSession.cs:868</c>) is never
-    /// taken and <see cref="KeepAlive.BuildPayload(bool)"/> stays unexercised.
-    /// Injecting <see cref="FakeTimeProvider"/> via the internal
-    /// <c>SshSession(TimeProvider)</c> ctor and advancing it past the interval
-    /// deterministically trips the gate — no wall-clock delay, no flakiness.
+    /// against the configured interval; the never-sent sentinel makes the FIRST
+    /// call always take the send branch (parity <c>keepalive.c:71</c>, where the
+    /// calloc'ed <c>keepalive_last_sent == 0</c> makes the first call send). The
+    /// fake clock keeps the follow-up call deterministic: the post-send baseline
+    /// is the advanced fake time, so the next call sees elapsed 0 and must
+    /// return the remaining time without resending. Injecting
+    /// <see cref="FakeTimeProvider"/> via the internal
+    /// <c>SshSession(TimeProvider)</c> ctor avoids any wall-clock dependence.
     /// This mirrors the unit-test pattern in
     /// <c>KeepAliveTests.ConfigureKeepAlive_IntervalOneIsRewrittenToTwo</c>.
     /// </para>
@@ -145,15 +139,14 @@ public sealed class DockerForwardTests : IDisposable
             cancellationToken: cancellationToken);
 
         // Configure with interval=1 (the libssh2 quirk rewrites this to 2 per
-        // keepalive.c:50-51). Then advance fake time past the effective 2s
-        // interval — the elapsed-gate (SshSession.cs:868) now fires the send
-        // branch on the next SendKeepAliveAsync call.
+        // keepalive.c:50-51), then advance fake time so the post-send baseline
+        // is deterministic for the follow-up assertion.
         session.ConfigureKeepAlive(wantReply: false, intervalSeconds: 1);
         fakeTime.Advance(TimeSpan.FromSeconds(3));
 
-        // First call: elapsed (3s) > interval (2s) → send branch fires,
-        // KeepAlive.BuildPayload(false) is written to the wire, and the
-        // full effective interval (2) is returned.
+        // First call: the never-sent sentinel takes the send branch, the
+        // GLOBAL_REQUEST is framed through WriteGlobalRequestPacketAsync with
+        // want_reply=0, and the full effective interval (2) is returned.
         int sent = await session.SendKeepAliveAsync(cancellationToken);
         Assert.Equal(2, sent);
 

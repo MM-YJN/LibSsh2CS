@@ -529,12 +529,12 @@ public sealed class DockerChannelSurfaceTests : IDisposable
     /// arrives), then calls <see cref="SshChannel.WaitClosedAsync"/> — which
     /// returns immediately because <c>_remoteClose</c> is already set. Lights
     /// up <see cref="SshChannel.WaitClosedAsync"/> (0% → covered): the method
-    /// entry, the <c>_remoteEof</c> guard (line 1930, must be set or it
+    /// entry, the <c>_remoteEof</c> guard (must be set or it
     /// throws <see cref="SshErrorCode.Inval"/>), and the return path.
     /// </summary>
     /// <remarks>
     /// <b>Why the close has already arrived.</b> <see cref="SshChannel.GetExitStatusAsync"/>
-    /// pumps until exit-status/signal OR <c>_remoteClose</c> (SshChannel.cs:1984).
+    /// pumps until exit-status/signal OR <c>_remoteClose</c>.
     /// OpenSSH sends <c>CHANNEL_CLOSE</c> right after <c>exit-status</c>, so by
     /// the time <c>GetExitStatusAsync</c> returns, <c>_remoteClose</c> is set
     /// and the <c>while(!_remoteClose)</c> loop body in
@@ -568,8 +568,7 @@ public sealed class DockerChannelSurfaceTests : IDisposable
 
         // Send our EOF (idempotent if DisposeAsync already sent it) and wait
         // for the peer's EOF — both are required before WaitClosedAsync
-        // (the guard at SshChannel.cs:1930 throws Inval if _remoteEof is
-        // not set).
+        // (which throws Inval if _remoteEof is not set).
         await channel.SendEofAsync(ct);
         await channel.WaitEofAsync(ct);
 

@@ -120,7 +120,7 @@ public class SshChannelSignalTests
     public async Task SignalAsync_AfterClose_ThrowsChannelClosed()
     {
         // Parity with WriteAsync's post-close guard (SshChannelCloseTests). The
-        // _localClose guard lives in SendChannelRequestAsync (added 3.6.2) so
+        // _localClose guard lives in SendChannelRequestAsync so
         // all CHANNEL_REQUEST senders (exec/setenv/pty/signal/auth-agent/etc.)
         // reject cleanly instead of writing into a closed channel.
         using var h = new ChannelTestHarness();

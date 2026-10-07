@@ -12,7 +12,7 @@ namespace LibSsh2CS.UnitTests.Agent;
 /// response parsing, error mapping, lifecycle) without any real socket I/O.
 /// The actual transport bytes are exercised by
 /// <see cref="UnixSocketAgentTransportTests"/>; the live end-to-end path is
-/// exercised by <c>DockerAgentTests</c> (Phase 4 increment 4.5).
+/// exercised by <c>DockerAgentTests</c>.
 /// </summary>
 public class SshAgentTests
 {

@@ -6,7 +6,7 @@ using LibSsh2CS.Transport;
 namespace LibSsh2CS.UnitTests.Transport;
 
 /// <summary>
-/// Increment 3.4.4 — rekey auto-trigger in <see cref="ChannelRouter"/>. The
+/// Rekey auto-trigger in <see cref="ChannelRouter"/>. The
 /// router checks per-direction byte/packet counters and the elapsed time
 /// against the configured <see cref="RekeyPolicy"/> at the top of every
 /// <see cref="ChannelRouter.PumpOnceAsync"/> / <see cref="ChannelRouter.WaitAsync"/>
@@ -16,8 +16,8 @@ namespace LibSsh2CS.UnitTests.Transport;
 /// <remarks>
 /// Tests use the cleartext mock-pipe pattern (the channel protocol is
 /// cipher-agnostic). The rekey callback is a counting stub — actual rekey
-/// execution is exercised in 3.4.5 (full session integration) and 3.4.6
-/// (end-to-end under load).
+/// execution is exercised by the full session integration tests and the
+/// end-to-end under-load tests.
 /// </remarks>
 public class RekeyAutoTriggerTests
 {

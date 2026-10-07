@@ -5,15 +5,15 @@ using LibSsh2CS.Transport;
 namespace LibSsh2CS.UnitTests.Channel;
 
 /// <summary>
-/// Multi-channel concurrency tests for the cooperative pumper (increment
-/// 3.6.2/3.6.3). Two or more <see cref="SshChannel"/> instances on one
+/// Multi-channel concurrency tests for the cooperative pumper. Two or more
+/// <see cref="SshChannel"/> instances on one
 /// <see cref="ChannelRouter"/> have outstanding operations simultaneously,
 /// driven via <see cref="Task.WhenAll"/>/<see cref="Task.Run"/>. The cleartext
 /// harness is shared (single mock-server thread = the test thread); the
 /// concurrency under test is on the CLIENT side.
 /// </summary>
 /// <remarks>
-/// These tests verify the core invariants added in 3.6:
+/// These tests verify the core multi-channel invariants:
 /// <list type="bullet">
 /// <item>Two channels can have outstanding <see cref="SshChannel.ReadAsync"/>
 /// calls at the same time — neither blocks the other from making progress.</item>
@@ -79,7 +79,7 @@ public class ConcurrentChannelTests
 
     /// <summary>
     /// Two channels call <see cref="SshChannel.WriteAsync"/> concurrently. The
-    /// writer lock (3.6.1) serializes the actual wire writes; both DATA packets
+    /// writer lock serializes the actual wire writes; both DATA packets
     /// reach the server, each addressed to the correct remote channel id.
     /// Verifies the writer-lock invariant: on-wire ordering matches call
     /// ordering, no corruption.
@@ -318,7 +318,7 @@ public class ConcurrentChannelTests
     /// property of the router's per-channel slot, independent of how many
     /// concurrent awaiters there are. The router sees A's outstanding
     /// <see cref="ChannelRouter.WaitForReplyAsync"/> call when it pumps the
-    /// batched replies; if it stored them by type alone (the pre-3.6.2 bug), A
+    /// batched replies; if it stored them by type alone (the old bug), A
     /// would consume B's reply and the second <c>await</c> below would hang.
     /// </remarks>
     [Fact]
@@ -466,7 +466,7 @@ public class ConcurrentChannelTests
         }
     }
 
-    // ── 10. Lost-wakeup stress (C1 regression) ───────────────────────────
+    // ── 10. Lost-wakeup stress ──────────────────────────────────────────
     //
     // Exercises the lost-wakeup fix: many channels each start a read, then
     // data is fed for them all in one batch. The pre-fix code registered the
@@ -546,7 +546,7 @@ public class ConcurrentChannelTests
         }
     }
 
-    // ── 11. Same-channel full-duplex (M3 regression) ─────────────────────
+    // ── 11. Same-channel full-duplex ────────────────────────────────────
     //
     // Exercises the multi-waiter-per-channel fix: a single channel has a
     // ReadAsync AND a WriteAsync (zero-outbound-window) outstanding
@@ -617,7 +617,7 @@ public class ConcurrentChannelTests
         Assert.Equal(0xAA, buf[0]);
     }
 
-    // ── 12. Cancellation does not leak a stale TCS (M1 regression) ───────
+    // ── 12. Cancellation does not leak a stale TCS ──────────────────────
     //
     // A channel's ReadAsync is canceled. The pre-fix code did NOT remove the
     // canceled TCS from _signals, so a subsequent ReadAsync on the same
@@ -628,7 +628,7 @@ public class ConcurrentChannelTests
     /// A channel's <see cref="SshChannel.ReadAsync"/> is cancelled while
     /// parked (its TCS is registered). A subsequent ReadAsync on the same
     /// channel must NOT see a stale canceled TCS — it should succeed normally
-    /// when data arrives. Verifies the M1 fix (finally-block TCS cleanup).
+    /// when data arrives. Verifies the fix (finally-block TCS cleanup).
     /// </summary>
     [Fact]
     public async Task CancelledRead_DoesNotLeakStaleTcs_SubsequentReadSucceeds()
@@ -678,9 +678,9 @@ public class ConcurrentChannelTests
         Assert.Equal(0x42, buf2[0]);
     }
 
-    // ── 13. Concurrent OpenAsync (C2 regression) ─────────────────────────
+    // ── 13. Concurrent OpenAsync ────────────────────────────────────────
     //
-    // Exercises the C2 fix: pre-fix OpenAsync used the legacy unguarded
+    // Exercises the fix: pre-fix OpenAsync used the legacy unguarded
     // router.WaitAsync, so two concurrent OpenSessionAsync calls would race
     // on the single-reader PipeReader (InvalidOperationException) and could
     // consume each other's OPEN_CONFIRMATION (no recipient filter). The fix

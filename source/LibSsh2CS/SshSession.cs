@@ -100,7 +100,7 @@ public sealed class SshSession : IAsyncDisposable
 
     // ── Forward listeners ────────────────────────────────
     // Concurrent registry keyed by (host, port) for O(1) lookup during the
-    // inbound CHANNEL_OPEN "forwarded-tcpip" dispatch in 5.6 (parity
+    // inbound CHANNEL_OPEN "forwarded-tcpip" dispatch (parity
     // packet.c:137-141). SshSession.ListenForwardAsync adds; SshListener.DisposeAsync
     // removes via SshSession.UnregisterListener.
     private readonly ConcurrentDictionary<(string Host, int Port), SshListener> _listeners = new();
@@ -114,7 +114,7 @@ public sealed class SshSession : IAsyncDisposable
     // the listener-teardown block pushes the analyzer
     // past its flow-analysis budget. The field is disposed along every
     // code path that assigns it.
-    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "the dispose call `_channelRouter?.Dispose()` in DisposeAsync is genuine, but the nullable annotation combined with the listener-teardown block added in Phase 5.5 pushes the analyzer past its flow-analysis budget. The field is disposed along every code path that assigns it.")]
+    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "the dispose call `_channelRouter?.Dispose()` in DisposeAsync is genuine, but the nullable annotation combined with the listener-teardown block pushes the analyzer past its flow-analysis budget. The field is disposed along every code path that assigns it.")]
     private ChannelRouter? _channelRouter;
     private NegotiatedMethods? _negotiated;
     private string? _serverBanner;
@@ -259,7 +259,7 @@ public sealed class SshSession : IAsyncDisposable
     /// </summary>
     internal void SetChannelRouterForTest(ChannelRouter router) => _channelRouter = router;
 
-    // ── Internal accessors for UserAuth ─────────────────────────────────────
+    // ── Internal accessors for SshUserAuth ──────────────────────────────────
 
     /// <summary>The outbound packet framer. Null before handshake.</summary>
     internal PacketWriter? Writer => _writer;
@@ -339,7 +339,7 @@ public sealed class SshSession : IAsyncDisposable
 
     /// <summary>
     /// Sets the authenticated flag and activates delayed compression. Called by
-    /// <c>UserAuth</c> methods on SSH_MSG_USERAUTH_SUCCESS.
+    /// <see cref="SshUserAuth"/> methods on SSH_MSG_USERAUTH_SUCCESS.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -368,7 +368,7 @@ public sealed class SshSession : IAsyncDisposable
 
     /// <summary>
     /// Gets or sets the pre-auth banner captured from <c>SSH_MSG_USERAUTH_BANNER</c>
-    /// (type 53). Set by <c>UserAuth</c> response handlers.
+    /// (type 53). Set by <see cref="SshUserAuth"/> response handlers.
     /// </summary>
     internal string? UserAuthBanner
     {
@@ -758,7 +758,7 @@ public sealed class SshSession : IAsyncDisposable
         // the server sends EXT_INFO immediately after its NEWKEYS, so the packet
         // is typically read + stashed during the SERVICE_ACCEPT wait above (the
         // pump reads it from the pipe before the SERVICE_ACCEPT packet). Retrieve
-        // it non-blockingly now; if present, parse server-sig-algs for UserAuth.
+        // it non-blockingly now; if present, parse server-sig-algs for SshUserAuth.
         if (_queue.TryTakeStashed(PacketType.ExtInfo, out RawPacket extInfoPkt))
         {
             var ext = ExtInfo.Parse(extInfoPkt.Payload);

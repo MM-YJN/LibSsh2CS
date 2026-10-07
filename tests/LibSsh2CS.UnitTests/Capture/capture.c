@@ -1,5 +1,5 @@
 /*
- * libssh2 capture harness — increment 5 oracle.
+ * libssh2 capture harness — packet-framing oracle.
  *
  * Produces, for one SSH session pinned to a single cipher/MAC/kex/hostkey combo:
  *   - on stderr (gated by LIBSSH2_PACKET_DUMP env var): "PKTDUMP KEY <letter> <len> <hex...>"

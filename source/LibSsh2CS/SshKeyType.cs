@@ -20,7 +20,7 @@ public enum SshKeyType
     /// <summary>
     /// <c>ssh-rsa</c> — an RSA private key. Signs as <c>ssh-rsa</c> (SHA-1),
     /// <c>rsa-sha2-256</c>, or <c>rsa-sha2-512</c> depending on
-    /// <c>server-sig-algs</c> (see <c>UserAuth</c>'s RSA-SHA2 selection).
+    /// <c>server-sig-algs</c> (see <see cref="SshUserAuth"/>'s RSA-SHA2 selection).
     /// </summary>
     Rsa = 1,
 

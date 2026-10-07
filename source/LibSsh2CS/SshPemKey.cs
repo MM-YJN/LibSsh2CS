@@ -5,7 +5,7 @@ namespace LibSsh2CS;
 
 /// <summary>
 /// A parsed OpenSSH private key's type-specific material. The caller
-/// (<c>UserAuth.AuthenticateWithPublicKeyAsync</c>) uses this to sign the
+/// (<c>SshUserAuth.AuthenticateWithPublicKeyAsync</c>) uses this to sign the
 /// userauth request via <c>SshSign.Sign</c>. Built by <see cref="Parse"/>
 /// from the <see cref="OpenSshKey.PrivateKeyBlob"/> produced by
 /// <see cref="SshPemParser"/>.
@@ -66,8 +66,8 @@ public abstract record SshPemKey
         // The PrivateKeyBlob starts at check1. Re-read: check1 (u32), check2 (u32),
         // keytype (string), then the type-specific fields.
         var r = new SshWireReader(openSshKey.PrivateKeyBlob);
-        _ = r.ReadUInt32(); // check1 — already validated by PemParser
-        _ = r.ReadUInt32(); // check2 — already validated by PemParser
+        _ = r.ReadUInt32(); // check1 — already validated by SshPemParser
+        _ = r.ReadUInt32(); // check2 — already validated by SshPemParser
         ReadOnlySpan<byte> keytype = r.ReadSshBytes();
 
         if (keytype.SequenceEqual("ssh-rsa"u8))
@@ -110,7 +110,7 @@ public abstract record SshPemKey
         // The comment string follows and is REQUIRED: the C reads it
         // and fails hard when it cannot (openssl.c:1524, PROTO "RSA no
         // comment") — the structural read is the C's format validation. The
-        // value is not surfaced (PemParser's OpenSshKey.Comment is empty by
+        // value is not surfaced (SshPemParser's OpenSshKey.Comment is empty by
         // design).
         _ = r.ReadSshBytes();   // comment (required; not surfaced)
         return new RsaPemKey(n, e, d, coeff, p, q);

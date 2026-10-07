@@ -162,11 +162,11 @@ public class RunExchangeFlowTests
     }
 
     // ────────────────────────────────────────────────────────────────────────
-    // Increment-8 hostkey-verify integration: the verify-callback seam in
+    // Hostkey-verify integration: the verify-callback seam in
     // RunExchangeAsync (invoked AFTER H, BEFORE NEWKEYS) is wired to
     // HostKeyVerifier.Verify. The mock server produces a REAL RSA-SHA256
-    // signature over H (Ed25519 Sign is deferred to Phase 2, so RSA — which
-    // the BCL can sign — exercises the same uniform parse + verify path).
+    // signature over H (RSA — which the BCL can sign — exercises the same
+    // uniform parse + verify path).
     // ────────────────────────────────────────────────────────────────────────
 
     [Theory]
@@ -181,7 +181,7 @@ public class RunExchangeFlowTests
         byte[] iClient = [PacketType.KexInit, 0x01, 0x02, 0x03];
         byte[] iServer = [PacketType.KexInit, 0x04, 0x05, 0x06];
 
-        // D3 seam: the caller closes over negotiated.HostKey and delegates to
+        // Verify seam: the caller closes over negotiated.HostKey and delegates to
         // HostKeyVerifier.Verify. RunExchangeAsync invokes this after computing H,
         // before NEWKEYS.
         Task<KeyExchange.KexExchangeResult> clientTask = KeyExchange.RunExchangeAsync(

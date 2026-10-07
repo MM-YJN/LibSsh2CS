@@ -15,7 +15,7 @@ namespace LibSsh2CS.UnitTests.Agent;
 ///   <item><see cref="SshAgentExtensions.AuthenticateWithIdentityAsync"/> —
 ///   argument validation. The end-to-end sign path (algorithm name → flags →
 ///   agent request → response) is verified live by
-///   <c>DockerAgentTests</c> (Phase 4 increment 4.5).</item>
+///   <c>DockerAgentTests</c>.</item>
 /// </list>
 /// </summary>
 public class SshAgentExtensionsTests
@@ -61,7 +61,7 @@ public class SshAgentExtensionsTests
     [Fact]
     public void Flags_UnknownAlgorithm_ReturnsNone()
     {
-        // Defensive — should never happen (UserAuth validates before invoking
+        // Defensive — should never happen (SshUserAuth validates before invoking
         // the callback), but a future key type that reaches the agent shouldn't
         // crash with IndexOutOfRange or the like.
         Assert.Equal(SshAgentSignFlags.None, SshAgentExtensions.AlgorithmNameToFlags("ssh-futurekey-v1"));

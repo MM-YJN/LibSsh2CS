@@ -4,14 +4,15 @@ namespace LibSsh2CS.Transport;
 
 /// <summary>
 /// Curve25519 Diffie-Hellman key exchange (RFC 8731), used by the
-/// <c>curve25519-sha256</c> / <c>curve25519-sha256@libssh2.org</c> KEX methods.
+/// <c>curve25519-sha256</c> KEX method.
 /// </summary>
 /// <remarks>
 /// <para>
-/// libssh2 C source: <c>kex.c</c> <c>curve25519_sha256</c> + the in-ported
-/// <c>curve25519.c</c>. The scalar-multiplication primitive is the BCL
-/// <see cref="X25519DiffieHellman"/> (constant-time, platform-backed), which
-/// replaces the previous in-ported RFC 7748 §5 Montgomery ladder.
+/// libssh2 C source: <c>kex.c</c> <c>curve25519_sha256</c>, which delegates the
+/// scalar multiplication to the crypto backend (<c>_libssh2_curve25519_new</c> /
+/// <c>_libssh2_curve25519_gen_k</c>). The scalar-multiplication primitive here is
+/// the BCL <see cref="X25519DiffieHellman"/> (constant-time, platform-backed),
+/// which replaced the previous managed RFC 7748 §5 Montgomery ladder.
 /// </para>
 /// <para>
 /// The client public key is exchanged as a 32-byte little-endian u-coordinate

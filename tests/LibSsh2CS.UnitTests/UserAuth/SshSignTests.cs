@@ -179,7 +179,7 @@ public class SshSignTests
     // ════════════════════════════════════════════════════════════════════════
     // ECDSA (ecdsa-sha2-nistp256/384/521). These tests pin two parity bugs
     // surfaced by the ECDSA client-auth integration tests
-    // (DockerAuthTests.Auth_EcdsaP*_PublicKey_Succeeds):
+    // (DockerAuthTests.Auth_EcdsaP*PublicKey_Succeeds):
     //
     //  (1) D-length normalization: the SSH mpint Exponent may carry a 0x00
     //      sign guard (coordSize+1 bytes) or be shorter than coordSize.

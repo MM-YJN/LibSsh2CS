@@ -6,8 +6,7 @@ namespace LibSsh2CS.UnitTests;
 /// Source-scanning convention tests for LibSsh2CS, ported 1:1 from
 /// <c>tests/LibGit2CS.UnitTests/IO/AsyncConventionTests.cs</c> and pointed at
 /// <c>source/LibSsh2CS/**/*.cs</c>. These tripwires run on every
-/// <c>dotnet test</c> and catch async-convention regressions introduced by Phase 1
-/// increments 4-8 and beyond.
+/// <c>dotnet test</c> and catch async-convention regressions.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -47,7 +46,7 @@ public partial class AsyncConventionTests
     private static readonly HashSet<string> s_syncOverAsyncAllowlist = [];
 
     /// <summary>
-    /// <see cref="IO.AsyncFileIO"/> (Phase 3 increment 3.1.6) is the single
+    /// <see cref="IO.AsyncFileIO"/> is the single
     /// chokepoint for buffered <see cref="File"/> IO in the library. It uses
     /// async BCL calls (<c>File.ReadAllBytesAsync</c> / <c>File.WriteAllBytesAsync</c>)
     /// which the regex does not flag (it matches the sync <c>File.ReadAll*</c>

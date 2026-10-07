@@ -2,11 +2,11 @@ namespace LibSsh2CS.UnitTests.KnownHosts;
 
 /// <summary>
 /// Tests for <see cref="SshKnownHosts.Check(string, int, byte[], SshKnownHostKeyType, SshKnownHostFormat)"/>
-/// — Phase 3 increment 3.1.2: Plain and Custom stored formats (no SHA1 yet).
+/// with Plain and Custom stored formats.
 /// </summary>
 /// <remarks>
 /// <see cref="SshKnownHostFormat.Sha1"/>-stored entries (HMAC-SHA1 hostname hashing)
-/// are delivered in increment 3.1.3 with their own test file. This file
+/// have their own test file (<c>KnownHostsSha1CheckTests</c>). This file
 /// exercises every other branch of <c>knownhost_check</c> (<c>knownhost.c:350-497</c>).
 /// </remarks>
 public class KnownHostsCheckTests

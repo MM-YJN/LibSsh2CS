@@ -11,7 +11,7 @@ using Microsoft.Extensions.Logging;
 namespace LibSsh2CS.IntegrationTests.Session;
 
 /// <summary>
-/// Phase B live integration tests for known-hosts verification during the SSH
+/// Live integration tests for known-hosts verification during the SSH
 /// transport handshake. Probes a live OpenSSH server in Docker (via the
 /// shared <see cref="AlpineNoKeySshImageFixture"/> assembly fixture) to
 /// capture its host key, builds a <see cref="SshKnownHosts"/> collection,

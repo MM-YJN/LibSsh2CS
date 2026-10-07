@@ -89,7 +89,7 @@ namespace LibSsh2CS.Transport;
 /// </para>
 /// <para>
 /// <b>Queue ownership.</b> Once channels exist, this router is the SOLE reader
-/// of <see cref="PacketQueue"/>. <c>UserAuth</c> finished before any channel
+/// of <see cref="PacketQueue"/>. <see cref="SshUserAuth"/> finished before any channel
 /// opens; <c>RekeyAsync</c> must not run concurrently with channel ops
 /// (single-consumer contract).
 /// </para>
@@ -129,7 +129,7 @@ internal sealed class ChannelRouter : IDisposable
     //
     // Single-slot plumbing for outbound SSH_MSG_GLOBAL_REQUESTs that have
     // want_reply=TRUE (keepalive with replies, tcpip-forward listen setup,
-    // cancel-tcpip-forward, hostkeys-prove-001, etc.). The cooperative pumper
+    // cancel-tcpip-forward, hostkeys-prove-00@openssh.com, etc.). The cooperative pumper
     // completes _globalReplyTcs when it routes an inbound REQUEST_SUCCESS (81)
     // or REQUEST_FAILURE (82). The single-slot semaphore serializes concurrent
     // SendGlobalRequestAsync callers — at most one outstanding want_reply=TRUE
@@ -1118,7 +1118,7 @@ internal sealed class ChannelRouter : IDisposable
             // SSH_MSG_REQUEST_FAILURE ... }`; a want_reply=0 request — e.g.
             // OpenSSH's no-more-sessions — gets NO reply). Examples that
             // arrive in practice: hostkeys-00@openssh.com,
-            // no-more-sessions@openssh.com, keepalive-prove-001@openssh.com.
+            // no-more-sessions@openssh.com, keepalive@openssh.com.
             // Failing these is correct — the server will not retry (RFC 4254
             // §4: want_reply only gates whether the server expects a reply,
             // not whether it retries). Previously the failure was sent

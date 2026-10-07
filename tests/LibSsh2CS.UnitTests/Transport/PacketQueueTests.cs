@@ -148,8 +148,7 @@ public class PacketQueueTests
     public async Task WaitForTypeAsync_ExtInfo_StashedForLaterRetrieval()
     {
         // SSH_MSG_EXT_INFO (7) is stashed (not discarded); a later
-        // WaitForTypeAsync(7) retrieves it. Phase 2 userauth will consume it
-        // for server-sig-algs.
+        // WaitForTypeAsync(7) retrieves it for server-sig-algs consumption.
         byte[] extInfo = BuildCleartextPacket(PacketType.ExtInfo, [7, 0x00, 0x00, 0x00, 0x00]);
         byte[] kexinit = BuildCleartextPacket(PacketType.KexInit, [20]);
         PacketQueue q = BuildQueueWith([.. extInfo, .. kexinit]);

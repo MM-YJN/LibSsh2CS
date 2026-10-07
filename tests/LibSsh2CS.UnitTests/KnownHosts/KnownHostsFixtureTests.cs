@@ -7,7 +7,7 @@ using LibSsh2CS.Util;
 namespace LibSsh2CS.UnitTests.KnownHosts;
 
 /// <summary>
-/// Phase 3.6 parity-hardening tests: load real <c>ssh-keygen</c>-produced
+/// Parity-hardening tests: load real <c>ssh-keygen</c>-produced
 /// known_hosts fixtures (plain + <c>ssh-keygen -H</c> hashed forms) covering
 /// all 5 in-scope host key types, and verify byte-exact <see cref="SshKnownHosts"/>
 /// behavior end-to-end.
@@ -355,7 +355,7 @@ public class KnownHostsFixtureTests
 
         // WriteLine must emit "ssh-rsa" (the on-disk wire name), not any
         // rsa-sha2-* variant. The wire-name lookup delegates to
-        // HostKeyTypeRegistry — this pins the registry's RSA-stored-as-ssh-rsa
+        // SshHostKeyTypeRegistry — this pins the registry's RSA-stored-as-ssh-rsa
         // behavior against accidental divergence.
         string line = known.WriteLine(rsa, SshKnownHostFileType.OpenSsh);
         Assert.Contains(" ssh-rsa ", line);

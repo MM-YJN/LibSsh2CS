@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 namespace LibSsh2CS.IntegrationTests.Session;
 
 /// <summary>
-/// Phase 5.7+ live integration tests for the
+/// Live integration tests for the
 /// <see cref="SshSession"/> lifecycle surface that the per-feature Docker
 /// suites (<c>DockerAuthTests</c>, <c>DockerExecTests</c>,
 /// <c>DockerForwardTests</c>) don't otherwise exercise:

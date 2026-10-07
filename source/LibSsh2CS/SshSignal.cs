@@ -21,7 +21,7 @@ namespace LibSsh2CS;
 /// <b>AOT note.</b> The wire-name mapping is an explicit switch expression in
 /// <see cref="SshSignalExtensions.ToWireName"/> — no reflection, no
 /// <c>Enum.GetName</c>. Future enum additions must extend the switch (enforced
-/// by <c>SshSignalTests.ToWireName_AllMembersCovered</c>).
+/// by <c>SshSignalTests.ToWireName_AllMembersCovered_NoSwitchThrow</c>).
 /// </para>
 /// </remarks>
 public enum SshSignal

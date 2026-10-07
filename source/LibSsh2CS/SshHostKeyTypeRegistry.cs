@@ -21,8 +21,8 @@ namespace LibSsh2CS;
 /// narrowing widening cast is well-defined for the shared subset. This registry
 /// makes that relationship explicit and replaces the three previously
 /// duplicated switch tables in <see cref="SshKnownHosts"/> (<c>MatchKeyTypeName</c>
-/// + <c>ResolveKeyTypeName</c>), <c>HostKeyMethods</c> (<c>s_all</c> +
-/// <c>Lookup</c>), and <c>HostKeyVerifier</c> (<c>SigWireName</c>).
+/// + <c>ResolveKeyTypeName</c>), <c>HostKeyMethods</c> (the removed algorithm
+/// table + <c>Lookup</c>), and <c>HostKeyVerifier</c> (<c>SigWireName</c>).
 /// </para>
 /// <para>
 /// <b>Order matters.</b> <see cref="NegotiableWireNamesInPreferenceOrder"/>

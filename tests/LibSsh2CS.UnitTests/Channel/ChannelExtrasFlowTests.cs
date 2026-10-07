@@ -6,18 +6,18 @@ using LibSsh2CS.Transport;
 namespace LibSsh2CS.UnitTests.Channel;
 
 /// <summary>
-/// End-to-end lifecycle tests that exercise multiple 3.3 surfaces together:
+/// End-to-end lifecycle tests that exercise multiple PTY/shell surfaces together:
 /// open → RequestPty → Shell → WriteStdin → ReadStdout → SendEof → WaitEof →
 /// GetExitStatus → Dispose. Both sides drive real <see cref="PacketReader"/>/
 /// <see cref="PacketWriter"/>; every wire byte is asserted. Mirrors the
-/// 3.2-shipped <c>ChannelFlowTests</c> pattern.
+/// <c>ChannelFlowTests</c> pattern.
 /// </summary>
 public class ChannelExtrasFlowTests
 {
     /// <summary>
     /// The canonical interactive-shell lifecycle: open a session, request a
     /// PTY, start a shell, write stdin, read stdout + EOF + exit-status, close.
-    /// If this passes, the 3.3 extras compose end-to-end.
+    /// If this passes, the PTY/shell extras compose end-to-end.
     /// </summary>
     [Fact]
     public async Task FullLifecycle_PtyShellStdinStdoutExitStatusClose()
@@ -145,7 +145,7 @@ public class ChannelExtrasFlowTests
         // ch2: exec.
         Task execTask = ch2.ExecAsync("ls", TestContext.Current.CancellationToken);
         (await h.ServerReader.ReadPacketAsync(TestContext.Current.CancellationToken)).Dispose();
-        // 3.6.2: reply recipient must match ch2.LocalId (1); pre-3.6.2 the
+        // The reply recipient must match ch2.LocalId (1); the
         // type-only stash accepted any matching type, masking this typo.
         await h.FeedInboundAsync(BuildCleartext(PacketType.ChannelSuccess, BuildReply(PacketType.ChannelSuccess, 1)));
         await execTask;

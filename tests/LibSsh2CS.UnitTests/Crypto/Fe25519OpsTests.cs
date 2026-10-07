@@ -5,11 +5,11 @@ using LibSsh2CS.Crypto;
 namespace LibSsh2CS.UnitTests.Crypto;
 
 /// <summary>
-/// Cross-checks the new constant-time <see cref="Fe25519Ops"/> (10-limb radix-2^25.5)
-/// against the existing BigInteger <see cref="Fe25519"/> on random inputs. The
-/// BigInteger version is itself verified by the RFC 7748/8032 KATs in X25519Tests
-/// and Ed25519Tests, so it is a correct oracle. If every op matches on 1,000 random
-/// inputs, the new field arithmetic is byte-exact correct.
+/// Cross-checks the constant-time <see cref="Fe25519Ops"/> (10-limb radix-2^25.5)
+/// against the BigInteger <see cref="Fe25519Oracle"/> on random inputs. The
+/// oracle implements the RFC 7748/8032 reference arithmetic directly, so a
+/// byte-exact match on every operation establishes the field arithmetic's
+/// correctness.
 /// </summary>
 public class Fe25519OpsTests
 {
@@ -19,7 +19,7 @@ public class Fe25519OpsTests
 
     /// <summary>
     /// Generates a random field element as 32 random bytes, both as a BigInteger
-    /// (for the reference path) and as an Fe (for the new path).
+    /// (for the reference path) and as an Fe (for the constant-time path).
     /// </summary>
     private static BigInteger RandomFieldElement(out Fe fe)
     {

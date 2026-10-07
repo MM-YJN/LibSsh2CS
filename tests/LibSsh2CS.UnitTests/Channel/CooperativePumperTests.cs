@@ -5,7 +5,7 @@ using LibSsh2CS.Transport;
 namespace LibSsh2CS.UnitTests.Channel;
 
 /// <summary>
-/// Tests for the cooperative-pumper API added in increment 3.6.2:
+/// Tests for the cooperative-pumper API:
 /// <see cref="ChannelRouter.SignalChannel"/>,
 /// <see cref="ChannelRouter.WaitForStateChangeAsync"/>,
 /// <see cref="ChannelRouter.WaitForReplyAsync"/>,
@@ -14,7 +14,7 @@ namespace LibSsh2CS.UnitTests.Channel;
 /// <see cref="ChannelRouter.Unregister"/>. These complement
 /// <see cref="ChannelRouterTests"/> (which covers the legacy single-consumer
 /// path); the cross-channel concurrency scenarios are in
-/// <c>ConcurrentChannelTests</c> (increment 3.6.4).
+/// <c>ConcurrentChannelTests</c>.
 /// </summary>
 public class CooperativePumperTests
 {
@@ -116,7 +116,7 @@ public class CooperativePumperTests
     /// <summary>
     /// <see cref="ChannelRouter.WaitForReplyAsync"/> returns the reply whose
     /// recipient-channel field matches the waiting channel's LocalId, NOT a
-    /// random reply of the right type. This is the fix for the pre-3.6.2 latent
+    /// random reply of the right type. This is the fix for the latent
     /// bug where two channels with concurrent exec requests could have their
     /// CHANNEL_SUCCESS/FAILURE replies misrouted via the type-only stash.
     /// </summary>

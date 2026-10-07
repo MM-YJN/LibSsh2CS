@@ -12,8 +12,8 @@ namespace LibSsh2CS.Util;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This is the pipe-based counterpart of the <c>byte[]</c>-backed
-/// <c>PacketWireReader</c> at the bottom of <c>PemParser.cs</c>. The packet layer
+/// This is the pipe-based counterpart of the span-based
+/// <see cref="SshWireReader"/>. The packet layer
 /// (<see cref="Transport.PacketReader"/>) reads from a <c>PipeReader</c>, whose
 /// data spans one or more memory segments; <see cref="SequenceReader{T}"/>
 /// handles segment boundaries transparently.

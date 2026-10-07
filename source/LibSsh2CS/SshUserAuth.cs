@@ -266,7 +266,7 @@ public static class SshUserAuth
     /// <para>
     /// The library selects the signing algorithm name internally (RSA-SHA2
     /// selection consults <see cref="SshSession.ServerSignatureAlgorithms"/>,
-    /// parity with the PemKey overloads) and passes it to
+    /// parity with the <see cref="SshPemKey"/> overloads) and passes it to
     /// <paramref name="signAsync"/> at sign time. The callback does not need
     /// to do algorithm negotiation — it only needs to produce a signature for
     /// the algorithm it is handed.

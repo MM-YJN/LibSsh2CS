@@ -19,8 +19,8 @@ namespace LibSsh2CS.UnitTests.Crypto;
 /// byte-exact against <see cref="ScalarModL.MulAdd(byte[], byte[], byte[])"/>.
 /// </para>
 /// <para>
-/// The BigInteger path is itself validated by the existing Ed25519 sign tests
-/// (RFC 8032 §7.1 TEST 1–3), so it is a correct oracle.
+/// The BigInteger path is a direct implementation of the (s*a + b) mod L
+/// formula, and the RFC 8032 §7.1 TEST 1–3 sign tests pin the production path.
 /// </para>
 /// </remarks>
 public class ScalarModLTests
@@ -335,7 +335,8 @@ public class ScalarModLTests
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // Ed25519 sign parity — proves the H.6 swap will be sound before H.6 lands.
+    // Ed25519 sign parity — MulAdd matches the BigInteger (r + a*k) mod L
+    // formula and the RFC 8032 TEST 1 signature.
     // ════════════════════════════════════════════════════════════════════════
 
     [Fact]

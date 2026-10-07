@@ -18,7 +18,7 @@ public class SshChannelCloseTests
     [Fact]
     public async Task DisposeAsync_SendsEofThenClose_ToPeer()
     {
-        // D1 (channel.c:2658-2677): close sends EOF (if not sent) then CLOSE.
+        // channel.c:2658-2677: close sends EOF (if not sent) then CLOSE.
         using var h = new ChannelTestHarness();
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 9);
 
@@ -47,13 +47,9 @@ public class SshChannelCloseTests
     [Fact]
     public async Task DisposeAsync_DoesNotSendEof_IfAlreadySent()
     {
-        // channel.c:2658 — only send EOF if !local.eof. With the 3.2.6 model
-        // there is no public SendEofAsync yet, so exercise the branch by
-        // verifying the wire sequence is stable: one close after EOF was
-        // already sent via a prior DisposeAsync that we interrupted.
-        // (Covered indirectly: a full DisposeAsync sends exactly one EOF + one
-        // CLOSE — the assertion in DisposeAsync_SendsEofThenClose_ToPeer locks
-        // the count. Here we verify idempotency re-sends nothing.)
+        // channel.c:2658 — only send EOF if !local.eof. A full DisposeAsync sends
+        // exactly one EOF + one CLOSE; here we verify idempotency re-sends
+        // nothing.
         using var h = new ChannelTestHarness();
         SshChannel ch = h.CreateChannel(localId: 0, remoteId: 9);
 

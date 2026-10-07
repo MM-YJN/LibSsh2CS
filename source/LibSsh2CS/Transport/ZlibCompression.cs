@@ -46,7 +46,8 @@ internal sealed class ZlibCompression : ICompression
     private readonly bool _useInAuth;
 
     // One persistent codec per instance. An instance handles a single direction
-    // (compress OR decompress), set in Init — see KeyExchange.cs:822,854.
+    // (compress OR decompress), set in KeyExchange.InstallOutboundKeysAsync /
+    // InstallInboundKeys.
     private ZLibEncoder? _encoder;
     private ZLibDecoder? _decoder;
 
@@ -84,8 +85,8 @@ internal sealed class ZlibCompression : ICompression
         // storage (the packet layer reuses a pooled one), so no per-packet
         // ArrayBufferWriter/ToArray allocation occurs.
 
-        // Phase 1: feed all input without finalizing. The stream stays open
-        // across packets; only Flush (phase 2) marks a block boundary.
+        // Step 1: feed all input without finalizing. The stream stays open
+        // across packets; only Flush (step 2) marks a block boundary.
         ReadOnlySpan<byte> remaining = src;
         while (true)
         {
@@ -121,7 +122,7 @@ internal sealed class ZlibCompression : ICompression
             }
         }
 
-        // Phase 2: flush to emit a block boundary. The peer's decompressor
+        // Step 2: flush to emit a block boundary. The peer's decompressor
         // needs this marker to yield the packet's bytes.
         while (true)
         {
