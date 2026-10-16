@@ -19,7 +19,7 @@
          the generator as a build task with runtime marshalling disabled, which
          is what leaves the registered window class holding a real function
          pointer for its window procedure. -->
-    <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.333" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.363" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

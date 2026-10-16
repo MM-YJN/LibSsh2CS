@@ -11,7 +11,7 @@ using Xunit.Sdk;
 namespace LibSsh2CS.IntegrationTests.DockerFixture;
 
 /// <summary>
-/// Assembly-wide fixture that builds the Alpine 3.20 image with no
+/// Assembly-wide fixture that builds the Alpine 3.24 image with no
 /// <c>authorized_keys</c> entry (password + pubkey auth enabled) on first use and retains it across
 /// test runs. Used by the majority of tests (exec, channel surface, forward,
 /// session lifecycle, known-hosts, negotiation matrix, password auth). Test
@@ -24,7 +24,7 @@ public sealed class AlpineNoKeySshImageFixture(IMessageSink messageSink)
 {
     /// <inheritdoc/>
     protected override SshImageSpec Spec => new(
-        FromLine: "FROM alpine:3.20",
+        FromLine: "FROM alpine:3.24",
         // ssh-keygen -A generates one host key per family (rsa, ecdsa
         // nistp256, ed25519). Generate the extra ECDSA curves explicitly
         // so the hostkey-negotiation matrix tests can pin

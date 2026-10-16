@@ -13,7 +13,7 @@ using Xunit.Sdk;
 namespace LibSsh2CS.IntegrationTests.DockerFixture;
 
 /// <summary>
-/// Assembly-wide fixture that builds the Alpine 3.20 image configured for
+/// Assembly-wide fixture that builds the Alpine 3.24 image configured for
 /// host-based (<c>hostbased</c>) SSH authentication on first use and retains it across
 /// test runs. Used by
 /// <see cref="Session.DockerHostbasedTests"/>, which exercises
@@ -72,7 +72,7 @@ public sealed class AlpineHostbasedSshImageFixture(IMessageSink messageSink)
 
     /// <inheritdoc/>
     protected override SshImageSpec Spec => new(
-        FromLine: "FROM alpine:3.20",
+        FromLine: "FROM alpine:3.24",
         InstallAndKeygen:
             "RUN apk add --no-cache openssh-server && ssh-keygen -A",
         // Create the test user + .ssh dir, then write shosts.equiv + ssh_known_hosts.

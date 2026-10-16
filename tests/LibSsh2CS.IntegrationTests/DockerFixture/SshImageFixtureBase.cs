@@ -142,7 +142,12 @@ public abstract class SshImageFixtureBase(IMessageSink messageSink) : IAsyncLife
         // CreateUserCmd empty and skips this block entirely).
         if (spec.CreateUserCmd.Length > 0)
         {
-            dockerfile += "RUN mkdir -p /home/" + SshDockerFixture.TestUser + "/.ssh && chmod 700 /home/" + SshDockerFixture.TestUser + "/.ssh\n";
+            // OpenSSH 10.3 creates forwarded-agent sockets under ~/.ssh/agent,
+            // so password-only users also need to own their .ssh directory.
+            dockerfile += "RUN mkdir -p /home/" + SshDockerFixture.TestUser +
+                "/.ssh && chmod 700 /home/" + SshDockerFixture.TestUser +
+                "/.ssh && chown " + SshDockerFixture.TestUser + ":" + SshDockerFixture.TestUser +
+                " /home/" + SshDockerFixture.TestUser + "/.ssh\n";
 
             if (AuthorizedKey is not null)
             {

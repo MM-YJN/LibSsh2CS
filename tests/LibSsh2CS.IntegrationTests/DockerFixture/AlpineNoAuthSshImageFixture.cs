@@ -11,7 +11,7 @@ using Xunit.Sdk;
 namespace LibSsh2CS.IntegrationTests.DockerFixture;
 
 /// <summary>
-/// Assembly-wide fixture that builds the Alpine 3.20 image with both
+/// Assembly-wide fixture that builds the Alpine 3.24 image with both
 /// password and pubkey auth disabled (and no test user created) on first use and retains it across
 /// test runs. Used by the transport-handshake-only test
 /// (<c>DockerHandshakeTests</c>), which completes the SSH transport
@@ -26,7 +26,7 @@ public sealed class AlpineNoAuthSshImageFixture(IMessageSink messageSink)
 {
     /// <inheritdoc/>
     protected override SshImageSpec Spec => new(
-        FromLine: "FROM alpine:3.20",
+        FromLine: "FROM alpine:3.24",
         // No extra ECDSA keygen here: the handshake test doesn't pin host
         // key algorithms (it negotiates the default), so the base
         // ssh-keygen -A host keys (rsa, ecdsa-256, ed25519) suffice.

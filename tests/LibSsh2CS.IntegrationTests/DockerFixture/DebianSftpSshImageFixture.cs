@@ -11,7 +11,7 @@ using Xunit.Sdk;
 namespace LibSsh2CS.IntegrationTests.DockerFixture;
 
 /// <summary>
-/// Assembly-wide fixture that builds a Debian 12 (bookworm) slim image with
+/// Assembly-wide fixture that builds a Debian 13 (trixie) slim image with
 /// the SFTP subsystem enabled (the <c>Subsystem sftp /usr/lib/openssh/sftp-server</c>
 /// directive in <c>sshd_config</c>). Used by
 /// <see cref="Session.DockerSubsystemTests"/>, which exercises
@@ -51,7 +51,7 @@ public sealed class DebianSftpSshImageFixture(IMessageSink messageSink)
 
     /// <inheritdoc/>
     protected override SshImageSpec Spec => new(
-        FromLine: "FROM debian:12-slim",
+        FromLine: "FROM debian:13-slim",
         // Same setup as DebianNoKeySshImageFixture: /run/sshd must exist or
         // Debian's sshd refuses to start. The extra ECDSA host keys keep the
         // variant uniform with the Alpine/DebianNoKey set (the SFTP test

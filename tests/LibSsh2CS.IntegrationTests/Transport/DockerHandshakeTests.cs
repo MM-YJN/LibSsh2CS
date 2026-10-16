@@ -27,7 +27,7 @@ namespace LibSsh2CS.IntegrationTests.Transport;
 /// </para>
 /// <para>
 /// <b>Container:</b> started from the <see cref="AlpineNoAuthSshImageFixture"/>
-/// assembly fixture (Alpine 3.20 with password + pubkey auth disabled and no
+/// assembly fixture (Alpine 3.24 with password + pubkey auth disabled and no
 /// test user created — auth is irrelevant since the handshake never reaches
 /// userauth). The image is built once for the whole assembly run.
 /// </para>

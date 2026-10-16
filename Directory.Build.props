@@ -73,6 +73,6 @@
     <NoWarnForSampleProjects>CA1303;CA1848;CA1822;$(NoWarnForTestProjects)</NoWarnForSampleProjects>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Nerdbank.GitVersioning" Version="3.10.91" PrivateAssets="All" Condition=" '$(NBGV_Disabled)' != 'true' "/>
+    <PackageReference Include="Nerdbank.GitVersioning" Version="3.10.94" PrivateAssets="All" Condition=" '$(NBGV_Disabled)' != 'true' "/>
   </ItemGroup>
 </Project>

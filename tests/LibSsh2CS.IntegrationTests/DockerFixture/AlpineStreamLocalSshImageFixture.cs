@@ -11,7 +11,7 @@ using Xunit.Sdk;
 namespace LibSsh2CS.IntegrationTests.DockerFixture;
 
 /// <summary>
-/// Assembly-wide fixture that builds the Alpine 3.20 image with
+/// Assembly-wide fixture that builds the Alpine 3.24 image with
 /// <c>socat</c> installed (for Unix-domain socket listeners) on first use and retains it across test runs.
 /// Used by <see cref="Session.DockerStreamLocalTests"/>, which exercises
 /// <see cref="SshSession.OpenDirectStreamLocalAsync"/> against a live
@@ -44,7 +44,7 @@ public sealed class AlpineStreamLocalSshImageFixture(IMessageSink messageSink)
 {
     /// <inheritdoc/>
     protected override SshImageSpec Spec => new(
-        FromLine: "FROM alpine:3.20",
+        FromLine: "FROM alpine:3.24",
         // Same hostkey generation as AlpineNoKey plus socat for the
         // Unix-socket listener the streamlocal test starts inside the
         // container.

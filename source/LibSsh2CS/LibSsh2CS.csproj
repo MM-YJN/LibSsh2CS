@@ -34,7 +34,7 @@
          NativeMethods.txt lists the requested APIs. The repository configures
          the generator to run as a build task, and disables runtime marshalling,
          in Directory.Build.props. -->
-    <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.333" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.363" PrivateAssets="all" />
   </ItemGroup>
 
 </Project>

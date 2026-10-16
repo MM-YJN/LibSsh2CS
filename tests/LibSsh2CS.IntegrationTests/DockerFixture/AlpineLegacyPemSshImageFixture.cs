@@ -11,7 +11,7 @@ using Xunit.Sdk;
 namespace LibSsh2CS.IntegrationTests.DockerFixture;
 
 /// <summary>
-/// Assembly-wide fixture that builds the Alpine 3.20 image with EVERY
+/// Assembly-wide fixture that builds the Alpine 3.24 image with EVERY
 /// legacy-PEM test public key (<c>Fixtures/legacy_pem/*.pub</c>) installed
 /// in <c>authorized_keys</c> on first use and retains it across
 /// test runs. A single combined image (instead of
@@ -66,7 +66,7 @@ public sealed class AlpineLegacyPemSshImageFixture(IMessageSink messageSink)
 
     /// <inheritdoc/>
     protected override SshImageSpec Spec => new(
-        FromLine: "FROM alpine:3.20",
+        FromLine: "FROM alpine:3.24",
         // Same hostkey generation as AlpineNoKey: uniformity across the
         // variants (the PEM tests don't pin hostkey algorithms).
         InstallAndKeygen:

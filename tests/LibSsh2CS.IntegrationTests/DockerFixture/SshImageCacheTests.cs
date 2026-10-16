@@ -166,7 +166,7 @@ public sealed class SshImageCacheTests(AlpineNoKeySshImageFixture imageFixture)
         public int Attempts { get; private set; }
         public List<string> ContextDirectories { get; } = [];
         public Func<CancellationToken, Task> Prepare { get; set; } = _ => Task.CompletedTask;
-        protected override SshImageSpec Spec => new("FROM alpine:3.20", "RUN true", "RUN true", SshdConfigAuthAlpine);
+        protected override SshImageSpec Spec => new("FROM alpine:3.24", "RUN true", "RUN true", SshdConfigAuthAlpine);
         protected override string? AuthorizedKey => key;
 
         internal override IFutureDockerImage BuildImage(ImageFromDockerfileBuilder builder)

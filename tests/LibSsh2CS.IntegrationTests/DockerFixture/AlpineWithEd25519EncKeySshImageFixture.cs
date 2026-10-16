@@ -11,7 +11,7 @@ using Xunit.Sdk;
 namespace LibSsh2CS.IntegrationTests.DockerFixture;
 
 /// <summary>
-/// Assembly-wide fixture that builds the Alpine 3.20 image with the test
+/// Assembly-wide fixture that builds the Alpine 3.24 image with the test
 /// Ed25519 public key (<c>Fixtures/ed25519_enc_key.pub</c>) installed in
 /// <c>authorized_keys</c> on first use and retains it across
 /// test runs. Used by the bcrypt-encrypted Ed25519
@@ -27,7 +27,7 @@ public sealed class AlpineWithEd25519EncKeySshImageFixture(IMessageSink messageS
 {
     /// <inheritdoc/>
     protected override SshImageSpec Spec => new(
-        FromLine: "FROM alpine:3.20",
+        FromLine: "FROM alpine:3.24",
         // Same hostkey generation as AlpineWithEd25519Key: the extra ECDSA
         // keys are harmless and keep the variants uniform.
         InstallAndKeygen:

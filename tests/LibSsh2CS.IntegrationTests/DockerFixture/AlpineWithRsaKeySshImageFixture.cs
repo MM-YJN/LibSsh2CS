@@ -11,7 +11,7 @@ using Xunit.Sdk;
 namespace LibSsh2CS.IntegrationTests.DockerFixture;
 
 /// <summary>
-/// Assembly-wide fixture that builds the Alpine 3.20 image with the test
+/// Assembly-wide fixture that builds the Alpine 3.24 image with the test
 /// RSA public key (<c>Fixtures/rsa_plain_key.pub</c>) installed in
 /// <c>authorized_keys</c> on first use and retains it across
 /// test runs. Used by the RSA publickey auth
@@ -25,7 +25,7 @@ public sealed class AlpineWithRsaKeySshImageFixture(IMessageSink messageSink)
 {
     /// <inheritdoc/>
     protected override SshImageSpec Spec => new(
-        FromLine: "FROM alpine:3.20",
+        FromLine: "FROM alpine:3.24",
         // Same hostkey generation as AlpineNoKey: the negotiation matrix
         // tests don't use this variant, but the extra ECDSA keys are
         // harmless and keep the variants uniform.

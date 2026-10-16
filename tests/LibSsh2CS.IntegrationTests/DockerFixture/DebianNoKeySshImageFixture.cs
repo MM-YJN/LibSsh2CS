@@ -11,7 +11,7 @@ using Xunit.Sdk;
 namespace LibSsh2CS.IntegrationTests.DockerFixture;
 
 /// <summary>
-/// Assembly-wide fixture that builds the Debian 12 (bookworm) slim image
+/// Assembly-wide fixture that builds the Debian 13 (trixie) slim image
 /// with a PAM-linked sshd (no <c>authorized_keys</c> entry) on first use and retains it across test runs.
 /// Used by the keyboard-interactive auth test, which requires
 /// <c>pam_unix.so</c> to drive the <c>USERAUTH_INFO_REQUEST</c> challenge
@@ -25,7 +25,7 @@ public sealed class DebianNoKeySshImageFixture(IMessageSink messageSink)
 {
     /// <inheritdoc/>
     protected override SshImageSpec Spec => new(
-        FromLine: "FROM debian:12-slim",
+        FromLine: "FROM debian:13-slim",
         // /run/sshd must exist or Debian's sshd refuses to start with
         // "Missing privilege separation directory: /run/sshd". Same ECDSA
         // host-key generation as Alpine for the negotiation matrix.
