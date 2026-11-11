@@ -709,9 +709,9 @@ public class ConcurrentChannelTests
         Assert.Equal(PacketType.ChannelOpen, openPktA.Type);
         Assert.Equal(PacketType.ChannelOpen, openPktB.Type);
 
-        // The two local ids are 0 and 1 (sequential allocation under the
-        // pump-lock? — actually AllocateLocalId is not pump-locked, but it's
-        // atomic via uint increment; the test just verifies both are distinct).
+        // AllocateLocalId serializes allocation under the registry lock, so
+        // concurrent opens receive distinct local ids; this test verifies the
+        // wire payloads carry those distinct ids.
         uint localA = BinaryPrimitives.ReadUInt32BigEndian(openPktA.Payload.Span.Slice(12, 4));
         uint localB = BinaryPrimitives.ReadUInt32BigEndian(openPktB.Payload.Span.Slice(12, 4));
         Assert.NotEqual(localA, localB);

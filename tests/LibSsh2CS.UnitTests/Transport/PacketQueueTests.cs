@@ -310,6 +310,31 @@ public class PacketQueueTests
         Assert.Equal(PacketType.ChannelData, cd.Type);
     }
 
+    // ── Truncated frame at EOF ──────────────────────────────────────────
+
+    [Fact]
+    public async Task WaitForTypeAsync_PartialPacketAtEof_ThrowsSocketDisconnect()
+    {
+        var pipe = new Pipe();
+        await pipe.Writer.WriteAsync(new byte[] { 0x00, 0x00 }, TestContext.Current.CancellationToken);
+        await pipe.Writer.CompleteAsync();
+
+        using var queue = new PacketQueue(new PacketReader(pipe.Reader))
+        {
+            ReadTimeout = TimeSpan.FromSeconds(2),
+        };
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(10));
+        Task<RawPacket> waitTask = Task.Run(
+            async () => await queue.WaitForTypeAsync(PacketType.KexInit, cts.Token));
+
+        SshException ex = await Assert.ThrowsAsync<SshException>(
+            async () => await waitTask.WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken));
+
+        Assert.Equal(SshErrorCode.SocketDisconnect, ex.ErrorCode);
+    }
+
     // ── Cancellation ───────────────────────────────────────────────────
 
     [Fact]

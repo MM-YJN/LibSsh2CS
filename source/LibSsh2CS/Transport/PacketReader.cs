@@ -212,8 +212,15 @@ internal sealed class PacketReader : IAsyncDisposable
             }
 
             // Not enough data yet — examine the whole buffer (signal the pipe to
-            // buffer more) and loop.
+            // buffer more) and loop. A completed pipe with buffered bytes can
+            // never produce a full frame: the peer closed mid-packet, so report
+            // the truncation instead of retrying the same buffer forever.
             _reader.AdvanceTo(buffer.Start, buffer.End);
+            if (result.IsCompleted)
+            {
+                throw new SshException(SshErrorCode.SocketDisconnect,
+                    "truncated packet at EOF");
+            }
         }
     }
 
@@ -235,7 +242,8 @@ internal sealed class PacketReader : IAsyncDisposable
     /// </remarks>
     /// <param name="packet">The packet, if one was read.</param>
     /// <param name="isCompleted">Set to <see langword="true"/> if the pipe is
-    /// completed (EOF); the caller should treat this as a disconnect.</param>
+    /// completed (EOF), even when a partial frame is still buffered; the caller
+    /// should treat this as a disconnect.</param>
     /// <param name="cancellationToken">Token reported if the pipe read was cancelled.</param>
     public bool TryReadPacket(out RawPacket packet, out bool isCompleted, CancellationToken cancellationToken = default)
     {
@@ -268,6 +276,7 @@ internal sealed class PacketReader : IAsyncDisposable
         }
 
         ReadOnlySequence<byte> buffer = result.Buffer;
+        bool pipeCompleted = result.IsCompleted;
         if (TryReadPacket(buffer, out RawPacket pkt, out SequencePosition consumedTo))
         {
             try
@@ -284,8 +293,10 @@ internal sealed class PacketReader : IAsyncDisposable
         }
 
         // Partial packet buffered — don't consume; the next blocking read will
-        // fill it out.
+        // fill it out. If the pipe is completed, those bytes can never complete
+        // a frame: report EOF so the caller stops waiting for more data.
         _reader.AdvanceTo(buffer.Start, buffer.End);
+        isCompleted = pipeCompleted;
         return false;
     }
 

@@ -148,7 +148,9 @@ internal sealed class ChannelRouter : IDisposable
 
     /// <summary>
     /// The next local channel id to assign. Sequential from 0, parity with
-    /// <c>_libssh2_channel_nextid</c> (<c>channel.c:64-89</c>).
+    /// <c>_libssh2_channel_nextid</c> (<c>channel.c:64-89</c>), but allocated
+    /// atomically under <see cref="_registryLock"/> and advanced past any id
+    /// that is still registered.
     /// </summary>
     private uint _nextLocalId;
     private readonly object _registryLock = new();
@@ -602,15 +604,27 @@ internal sealed class ChannelRouter : IDisposable
     // ── Registration / id allocation ───────────────────────────────────────
 
     /// <summary>
-    /// Allocates the next local channel id. Parity with
+    /// Allocates the next free local channel id. Parity with
     /// <c>_libssh2_channel_nextid</c> (<c>channel.c:64-89</c>): sequential from
-    /// 0, monotonically increasing.
+    /// 0, monotonically increasing until the <see cref="uint"/> space wraps.
+    /// The read/modify/write is serialized by <see cref="_registryLock"/>, and
+    /// ids belonging to live channels are skipped so a wrap cannot alias an
+    /// existing channel.
     /// </summary>
     public uint AllocateLocalId()
     {
-        uint id = _nextLocalId;
-        _nextLocalId++;
-        return id;
+        lock (_registryLock)
+        {
+            uint id;
+            do
+            {
+                id = _nextLocalId;
+                _nextLocalId = unchecked(_nextLocalId + 1);
+            }
+            while (_byLocalId.ContainsKey(id));
+
+            return id;
+        }
     }
 
     /// <summary>
@@ -619,6 +633,9 @@ internal sealed class ChannelRouter : IDisposable
     /// packet is sent (parity <c>channel.c:189</c> <c>_libssh2_list_add</c>), so
     /// any early channel packet routes correctly.
     /// </summary>
+    /// <exception cref="InvalidOperationException">A different channel is
+    /// already registered with the same <see cref="SshChannel.LocalId"/>.</exception>
+    /// <exception cref="ObjectDisposedException">The router has been disposed.</exception>
     public void Register(SshChannel channel)
     {
         ArgumentNullException.ThrowIfNull(channel);
@@ -629,7 +646,21 @@ internal sealed class ChannelRouter : IDisposable
                 channel.ReleaseInboundBuffers();
                 throw new ObjectDisposedException(nameof(ChannelRouter));
             }
-            _byLocalId[channel.LocalId] = channel;
+
+            if (!_byLocalId.TryAdd(channel.LocalId, channel))
+            {
+                // Allocation skips live ids, so this is a broken invariant:
+                // overwriting here would silently make the first channel
+                // unreachable and misroute its data/replies.
+                SshChannel existing = _byLocalId[channel.LocalId];
+                if (!ReferenceEquals(existing, channel))
+                {
+                    channel.ReleaseInboundBuffers();
+                }
+
+                throw new InvalidOperationException(
+                    $"Channel local id {channel.LocalId} is already registered.");
+            }
         }
     }
 

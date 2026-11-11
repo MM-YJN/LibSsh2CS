@@ -30,6 +30,34 @@ public class ChannelRouterTests
     }
 
     [Fact]
+    public void AllocateLocalId_SkipsIdsRegisteredToLiveChannels()
+    {
+        using var h = new ChannelTestHarness();
+
+        // Simulate the wrapped/reused-id case: the next candidate is already
+        // owned by a live channel, so allocation must skip it.
+        _ = h.CreateChannel(localId: 1);
+
+        Assert.Equal(0u, h.Router.AllocateLocalId());
+        Assert.Equal(2u, h.Router.AllocateLocalId());
+    }
+
+    [Fact]
+    public void Register_DuplicateLocalId_ThrowsAndKeepsExisting()
+    {
+        using var h = new ChannelTestHarness();
+        SshChannel existing = h.CreateChannel(localId: 7);
+        SshChannel duplicate = h.CreateChannel(localId: 7, register: false);
+
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
+            () => h.Router.Register(duplicate));
+
+        Assert.Contains("7", ex.Message, StringComparison.Ordinal);
+        Assert.True(h.Router.TryGet(7, out SshChannel? found));
+        Assert.Same(existing, found);
+    }
+
+    [Fact]
     public void Register_And_TryGet()
     {
         using var h = new ChannelTestHarness();
@@ -135,6 +163,35 @@ public class ChannelRouterTests
 
         Assert.Null(ch.TryDequeueStdout());
         Assert.Equal(0u, ch.ReadAvail);
+    }
+
+    [Fact]
+    public async Task ReadAsync_PartialPacketAtEof_ThrowsSocketDisconnect()
+    {
+        using var h = new ChannelTestHarness();
+        SshChannel ch = h.CreateChannel(localId: 0);
+
+        // Two bytes can never form a cleartext SSH frame (5-byte header minimum).
+        await h.FeedInboundAsync(new byte[] { 0x00, 0x00 });
+        h.CompleteInbound();
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(2));
+        Task<int> readTask = Task.Run(async () => await ch.ReadAsync(new byte[1], cts.Token));
+
+        try
+        {
+            int read = await readTask.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+            Assert.Fail($"Expected SocketDisconnect, but ReadAsync returned {read}.");
+        }
+        catch (SshException ex)
+        {
+            Assert.Equal(SshErrorCode.SocketDisconnect, ex.ErrorCode);
+        }
+        finally
+        {
+            await cts.CancelAsync();
+        }
     }
 
     // ── WINDOW_ADJUST routing ──────────────────────────────────────────────

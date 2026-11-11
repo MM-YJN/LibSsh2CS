@@ -318,7 +318,87 @@ public class PacketReaderTests
         Assert.Equal(3u, reader.Seqno);
     }
 
+    // ── EOF with a partial frame (truncated peer) ──────────────────────
+
+    [Fact]
+    public async Task ReadPacketAsync_CleartextPartialPacketAtEof_ThrowsSocketDisconnect()
+    {
+        var reader = new PacketReader(BuildPipeWithBytes([0x00, 0x00]));
+
+        SshException ex = await ReadUntilDisconnectAsync(reader);
+
+        Assert.Equal(SshErrorCode.SocketDisconnect, ex.ErrorCode);
+        Assert.Contains("truncated", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ReadPacketAsync_CleartextPartialHeaderAtEof_ThrowsSocketDisconnect()
+    {
+        byte[] header = new byte[5];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(header, 1000u);
+        header[4] = 4;
+        var reader = new PacketReader(BuildPipeWithBytes(header));
+
+        SshException ex = await ReadUntilDisconnectAsync(reader);
+
+        Assert.Equal(SshErrorCode.SocketDisconnect, ex.ErrorCode);
+    }
+
+    [Fact]
+    public async Task ReadPacketAsync_EncryptedPartialFirstBlockAtEof_ThrowsSocketDisconnect()
+    {
+        var reader = new PacketReader(BuildPipeWithBytes(new byte[10]));
+        ConfigureCtrReader(reader, mac: null);
+
+        SshException ex = await ReadUntilDisconnectAsync(reader);
+
+        Assert.Equal(SshErrorCode.SocketDisconnect, ex.ErrorCode);
+    }
+
+    [Fact]
+    public void TryReadPacket_PartialPacketAtEof_ReportsCompleted()
+    {
+        var reader = new PacketReader(BuildPipeWithBytes([0x00, 0x00]));
+
+        Assert.False(reader.TryReadPacket(
+            out RawPacket packet, out bool isCompleted, TestContext.Current.CancellationToken));
+
+        Assert.False(packet.HasPacket);
+        Assert.True(isCompleted);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Starts a read on a worker task, bounded by a short cancellation token,
+    /// and returns the disconnect exception. Fails if the read is cancelled or
+    /// returns a packet instead of reporting EOF.
+    /// </summary>
+    private static async Task<SshException> ReadUntilDisconnectAsync(PacketReader reader)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(2));
+
+        Task<RawPacket> readTask = Task.Run(async () => await reader.ReadPacketAsync(cts.Token));
+
+        RawPacket? packet = null;
+        try
+        {
+            packet = await readTask.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        }
+        catch (SshException ex)
+        {
+            return ex;
+        }
+        finally
+        {
+            await cts.CancelAsync();
+            packet?.Dispose();
+        }
+
+        Assert.Fail("Expected SshException(SocketDisconnect), but the read returned a packet.");
+        return null!;
+    }
 
     private static PacketFixture LoadFixture(string mode)
         => PacketFixtureLoader.Load(mode);
