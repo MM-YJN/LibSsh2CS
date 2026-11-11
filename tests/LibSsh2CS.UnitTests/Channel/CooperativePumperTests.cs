@@ -207,12 +207,11 @@ public class CooperativePumperTests
     /// <summary>
     /// After <see cref="ChannelRouter.Unregister"/>, packets for the channel
     /// are silently dropped (parity with <c>packet.c:973-978</c>). A reply for
-    /// the unregistered channel arrives at <see cref="ChannelRouter.WaitForReplyAsync"/>
-    /// of ANOTHER channel and is stashed but not picked up by the unregistered
-    /// channel (which can no longer wait).
+    /// the unregistered channel arrives while another channel pumps; it is
+    /// dropped instead of being retained in the orphaned reply slot.
     /// </summary>
     [Fact]
-    public async Task Unregister_SubsequentReplyForChannel_IsSilentlyDropped()
+    public async Task Unregister_SubsequentReplyForChannel_IsDropped()
     {
         using var h = new ChannelTestHarness();
         SshChannel ch = h.CreateChannel(localId: 3);
@@ -224,20 +223,12 @@ public class CooperativePumperTests
             PacketType.ChannelSuccess, BuildReplyPayload(PacketType.ChannelSuccess, 3)));
         h.CompleteInbound();
 
-        // Create a different channel and have it pump — the orphan reply will
-        // be stashed in _pendingReplies[3] (orphaned), but no channel waits on
-        // it so no harm.
+        // Create a different channel and have it pump the orphan reply.
         SshChannel chOther = h.CreateChannel(localId: 4);
-
-        // chOther's WaitForStateChange pumps the reply into _pendingReplies[3]
-        // and signals (no-op since ch is unregistered).
         await h.Router.WaitForStateChangeAsync(chOther, null, TestContext.Current.CancellationToken);
 
-        // The orphan reply sits in _pendingReplies[3]; ch (unregistered) can't
-        // retrieve it. The TryTake returns true (the slot exists), but no one
-        // cares because ch is gone. We assert the API behavior is consistent:
-        Assert.True(h.Router.TryTakePendingReply(3, out RawPacket orphan));
-        Assert.Equal(PacketType.ChannelSuccess, orphan.Type);
+        // The reply is discarded because its recipient is not registered.
+        Assert.False(h.Router.TryTakePendingReply(3, out _));
     }
 
     // ── Cancellation releases the awaiter cleanly ───────────────────────

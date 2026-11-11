@@ -30,9 +30,10 @@ namespace LibSsh2CS.Transport;
 /// <c>_libssh2_packet_add</c>, <c>packet.c:678-908</c>): SSH_MSG_DISCONNECT (1)
 /// throws <see cref="SshException"/>(<see cref="SshErrorCode.SocketDisconnect"/>);
 /// SSH_MSG_IGNORE (2) and SSH_MSG_DEBUG (4) are silently discarded; SSH_MSG_EXT_INFO
-/// (7) is stashed for userauth (it carries <c>server-sig-algs</c>); all
-/// other types are stashed for typed waiters. This inline dispatch happens
-/// before the strict-KEX policy check (matching <c>packet.c</c>'s order).
+/// (7) is stashed for userauth (it carries <c>server-sig-algs</c>), retaining
+/// at most one copy; all other types are stashed for typed waiters. This inline
+/// dispatch happens before the strict-KEX policy check (matching
+/// <c>packet.c</c>'s order).
 /// </para>
 /// <para>
 /// <b>Strict-KEX enforcement</b> (Terrapin mitigation, <c>packet.c:715-739</c>):
@@ -55,6 +56,13 @@ namespace LibSsh2CS.Transport;
 /// </remarks>
 internal sealed class PacketQueue : IDisposable
 {
+    // The stash is peer-controlled, so it is bounded per type and in total.
+    // Valid exchanges need only a few packets per type; the total cap keeps
+    // worst-case retained payloads in the low-megabyte range.
+    private const int MaxStashedPacketsPerType = 8;
+    private const int MaxStashedPackets = 64;
+    private const int MaxStashedExtInfoPackets = 1;
+
     private readonly PacketReader _reader;
 
     /// <summary>
@@ -74,6 +82,7 @@ internal sealed class PacketQueue : IDisposable
     /// </summary>
     private readonly Dictionary<int, Queue<RawPacket>> _stash = [];
     private readonly object _stashLock = new();
+    private int _stashCount;
     private bool _disposed;
 
     /// <summary>
@@ -126,6 +135,7 @@ internal sealed class PacketQueue : IDisposable
                 }
             }
             _stash.Clear();
+            _stashCount = 0;
         }
     }
 
@@ -496,6 +506,7 @@ internal sealed class PacketQueue : IDisposable
             if (_stash.TryGetValue(type, out Queue<RawPacket>? q) && q.Count > 0)
             {
                 packet = q.Dequeue();
+                _stashCount--;
                 if (q.Count == 0)
                 {
                     _stash.Remove(type);
@@ -568,6 +579,8 @@ internal sealed class PacketQueue : IDisposable
     /// <summary>
     /// Stashes a packet for a future typed waiter. Port of
     /// <c>_libssh2_packet_add</c>'s queue-insert path (<c>packet.c:910+</c>).
+    /// Packets beyond the per-type bound are dropped, and exceeding the total
+    /// bound aborts the read with a protocol error.
     /// </summary>
     private void AddStash(RawPacket packet)
     {
@@ -579,13 +592,31 @@ internal sealed class PacketQueue : IDisposable
                 return;
             }
 
-            if (!_stash.TryGetValue(packet.Type, out Queue<RawPacket>? q))
+            int perTypeLimit = packet.Type == PacketType.ExtInfo
+                ? MaxStashedExtInfoPackets
+                : MaxStashedPacketsPerType;
+            if (_stash.TryGetValue(packet.Type, out Queue<RawPacket>? q)
+                && q.Count >= perTypeLimit)
+            {
+                packet.Dispose();
+                return;
+            }
+
+            if (_stashCount >= MaxStashedPackets)
+            {
+                packet.Dispose();
+                throw new SshException(SshErrorCode.Proto,
+                    "unexpected packet stash limit exceeded");
+            }
+
+            if (q is null)
             {
                 q = new Queue<RawPacket>();
                 _stash[packet.Type] = q;
             }
 
             q.Enqueue(packet);
+            _stashCount++;
         }
     }
 
@@ -667,7 +698,9 @@ internal sealed class PacketQueue : IDisposable
                 // carries server-sig-algs (used by RSA-SHA2 auth). We stash it
                 // under its own type so a future WaitForTypeAsync(ExtInfo) can
                 // retrieve it. libssh2 parses it inline (packet.c:848-908); we
-                // defer parsing until after the key exchange.
+                // defer parsing until after the key exchange. Only the first
+                // copy is retained: the handshake consumes EXT_INFO once, and
+                // repeated copies have no reader.
                 AddStash(packet);
                 return true;
 

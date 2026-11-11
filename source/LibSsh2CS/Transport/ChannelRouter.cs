@@ -85,7 +85,9 @@ namespace LibSsh2CS.Transport;
 /// </list>
 /// Packets whose recipient channel is not registered are silently dropped
 /// (parity <c>packet.c:973-978</c> for DATA, <c>1094-1096</c> for EOF,
-/// <c>1221-1226</c> for CLOSE, <c>1314</c> for WINDOW_ADJUST).
+/// <c>1221-1226</c> for CLOSE, <c>1314</c> for WINDOW_ADJUST). Replies follow
+/// the same rule: a reply is retained only for a registered channel, so the
+/// peer cannot create reply slots for arbitrary ids.
 /// </para>
 /// <para>
 /// <b>Queue ownership.</b> Once channels exist, this router is the SOLE reader
@@ -216,6 +218,13 @@ internal sealed class ChannelRouter : IDisposable
     /// stash for reply packets (which conflated replies for different channels).
     /// </summary>
     private readonly ConcurrentDictionary<uint, RawPacket> _pendingReplies = new();
+
+    /// <summary>
+    /// Defensive upper bound on retained reply slots. A slot is created only
+    /// for a registered local channel, so the live-channel count is the real
+    /// bound; this cap guards future routing paths.
+    /// </summary>
+    private const int MaxPendingReplies = 1024;
 
     /// <summary>
     /// The full set of packet types the cooperative pumper routes: channel-async
@@ -683,10 +692,14 @@ internal sealed class ChannelRouter : IDisposable
         ArgumentNullException.ThrowIfNull(channel);
         // Also covers half-open channels abandoned after failure or cancellation.
         channel.ReleaseInboundBuffers();
+        RawPacket pending;
         lock (_registryLock)
         {
             _byLocalId.Remove(channel.LocalId);
+            _pendingReplies.TryRemove(channel.LocalId, out pending);
         }
+
+        pending.Dispose();
 
         // Cooperative-pumper cleanup. If the channel has registered
         // waiters, cancel them all so any in-flight await wakes up cleanly.
@@ -702,8 +715,6 @@ internal sealed class ChannelRouter : IDisposable
                 }
             }
         }
-
-        _pendingReplies.TryRemove(channel.LocalId, out _);
     }
 
     /// <summary>Looks up a registered channel by its local id.</summary>
@@ -1130,9 +1141,10 @@ internal sealed class ChannelRouter : IDisposable
     /// <see cref="RawPacket.Type"/>. If no caller is waiting (a late reply to
     /// a previously-canceled/timed-out request, or an unsolicited reply), the
     /// packet is dropped.</item>
-    /// <item><b>Channel reply</b> (91/92/99/100): stash in per-channel
-    /// <see cref="_pendingReplies"/> slot keyed by recipient id, signal the
-    /// channel.</item>
+    /// <item><b>Channel reply</b> (91/92/99/100): validate the recipient and
+    /// store it in the per-channel <see cref="_pendingReplies"/> slot. Replies
+    /// with a truncated payload or an unregistered recipient are dropped;
+    /// retained replies are capped and signal the channel.</item>
     /// <item><b>Channel-async</b> (93–98): dispatch via <see cref="RouteAsync"/>
     /// which mutates the target channel's state + signals.</item>
     /// </list>
@@ -1197,11 +1209,10 @@ internal sealed class ChannelRouter : IDisposable
 
         if (IsReplyType(pkt.Type))
         {
-            // Channel-scoped reply packet (91/92/99/100) — stash in per-channel
-            // slot, signal the channel.
-            uint recip = ReadRecipientId(pkt);
-            _pendingReplies[recip] = pkt;
-            SignalChannel(recip);
+            // Channel-scoped reply packet (91/92/99/100). Only a registered
+            // channel can own a slot; unknown or truncated recipients are
+            // dropped while holding the registry lock.
+            RouteReply(pkt);
             return;
         }
 
@@ -1289,19 +1300,65 @@ internal sealed class ChannelRouter : IDisposable
     }
 
     /// <summary>
-    /// Reads the recipient channel id (offset 1, BE32) from a packet payload.
-    /// All SSH_MSG_CHANNEL_* messages carry it there (RFC 4254 §5). Returns 0
-    /// if the payload is too short (the caller should drop the packet
-    /// defensively).
+    /// Stores a reply for a registered local channel and signals it. Replies
+    /// with a short payload or an unregistered recipient are discarded. The
+    /// registry check and slot insertion are serialized with
+    /// <see cref="Register"/> / <see cref="Unregister"/>, so a channel cannot
+    /// disappear between the check and the insertion.
     /// </summary>
-    private static uint ReadRecipientId(RawPacket pkt)
+    private void RouteReply(RawPacket pkt)
     {
-        if (pkt.Payload.Length < 5)
+        RawPacket replaced = default;
+        uint recipient = 0;
+        bool stored = false;
+
+        lock (_registryLock)
         {
-            return 0;
+            if (!_disposed && pkt.Payload.Length >= 5)
+            {
+                recipient = BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.Span.Slice(1, 4));
+                if (_byLocalId.ContainsKey(recipient)
+                    && (_pendingReplies.ContainsKey(recipient)
+                        || _pendingReplies.Count < MaxPendingReplies))
+                {
+                    replaced = StorePendingReply(recipient, pkt);
+                    stored = true;
+                }
+            }
         }
 
-        return BinaryPrimitives.ReadUInt32BigEndian(pkt.Payload.Span.Slice(1, 4));
+        if (!stored)
+        {
+            pkt.Dispose();
+            return;
+        }
+
+        replaced.Dispose();
+        SignalChannel(recipient);
+    }
+
+    /// <summary>
+    /// Adds or replaces the pending reply for <paramref name="recipient"/>.
+    /// Returns the replaced packet, if any, so the caller can dispose it after
+    /// releasing the registry lock. A concurrent waiter may remove or re-stash
+    /// a wrong-type reply, hence the retry loop.
+    /// </summary>
+    private RawPacket StorePendingReply(uint recipient, RawPacket pkt)
+    {
+        while (true)
+        {
+            if (_pendingReplies.TryGetValue(recipient, out RawPacket existing))
+            {
+                if (_pendingReplies.TryUpdate(recipient, pkt, existing))
+                {
+                    return existing;
+                }
+            }
+            else if (_pendingReplies.TryAdd(recipient, pkt))
+            {
+                return default;
+            }
+        }
     }
 
     // ── The pump (legacy entry points — now pump-lock-guarded) ──
@@ -1750,6 +1807,15 @@ internal sealed class ChannelRouter : IDisposable
         {
             channel.ReleaseInboundBuffers();
         }
+
+        foreach (uint localId in _pendingReplies.Keys)
+        {
+            if (_pendingReplies.TryRemove(localId, out RawPacket pending))
+            {
+                pending.Dispose();
+            }
+        }
+
         _queue.Dispose();
         // Cancel every registered waiter so in-flight awaits throw a clean
         // OCE rather than an ObjectDisposedException on the disposed semaphore.
