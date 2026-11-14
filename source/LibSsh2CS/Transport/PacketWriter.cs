@@ -25,6 +25,15 @@ namespace LibSsh2CS.Transport;
 /// the NEWKEYS packet itself).
 /// </para>
 /// <para>
+/// <b>NEWKEYS barrier.</b> Once a NEWKEYS frame has been published, every
+/// non-NEWKEYS write waits until <see cref="SetOutboundKeysAsync"/> installs the
+/// new cipher/MAC/compression. This is required for strict-KEX nonce safety:
+/// the seqno resets to 0 at NEWKEYS, so a packet framed in the window between
+/// the frame and the key swap would reuse the old key at the same sequence
+/// number (an AEAD nonce reuse for ChaCha20-Poly1305). A second NEWKEYS while
+/// one is pending is rejected with <see cref="SshErrorCode.Proto"/>.
+/// </para>
+/// <para>
 /// <b>Thread safety.</b> <see cref="WritePacketAsync"/> and
 /// <see cref="SetOutboundKeysAsync"/> are serialized by an internal
 /// <see cref="SemaphoreSlim"/>. This is required by the multi-channel
@@ -99,6 +108,20 @@ internal sealed class PacketWriter : IAsyncDisposable
     // sequence so on-wire ordering matches call ordering.
     private readonly SemaphoreSlim _writeLock = new(1, 1);
 
+    // ── NEWKEYS outbound-key transition barrier ────────
+    // Published while _writeLock is held, immediately before the NEWKEYS frame
+    // is written, and completed by SetOutboundKeysAsync. Any non-NEWKEYS write
+    // that acquires _writeLock while it is non-null releases the lock and waits
+    // for the install, so no packet can be framed under the old key between
+    // NEWKEYS and the key swap. This is required for strict KEX nonce safety:
+    // the seqno resets to 0 at NEWKEYS, so an old-key packet in that window
+    // would reuse the old ChaCha20-Poly1305 (key, seqno) pair.
+    private TaskCompletionSource? _outboundKeysPending;
+
+    // Terminal transition failure (install failure or writer disposal). Once
+    // set, further writes fail closed instead of falling back to the old key.
+    private Exception? _outboundKeyTransitionFault;
+
     // ── Per-packet scratch buffers ─────────────────────
     // Reused across packets under _writeLock, so the steady-state framing path
     // performs no heap allocation. _compressScratch receives the compressor
@@ -157,6 +180,12 @@ internal sealed class PacketWriter : IAsyncDisposable
     /// the swap so no write can be mid-encrypt while the cipher is replaced.
     /// </para>
     /// <para>
+    /// <b>Opens the NEWKEYS barrier.</b> If a NEWKEYS frame is pending, this
+    /// method completes the transition and wakes every write that was waiting
+    /// behind it. The gate is opened only after the cipher/MAC/compression
+    /// swap, seqno reset, and rekey-counter reset have all committed.
+    /// </para>
+    /// <para>
     /// Now async because <see cref="SemaphoreSlim.WaitAsync(CancellationToken)"/>
     /// is the correct way to take the lock from an async caller (the rekey flow
     /// runs from <c>RunExchangeAsync</c>, which is async).
@@ -199,6 +228,20 @@ internal sealed class PacketWriter : IAsyncDisposable
             // limits are per-key, not cumulative across the session).
             _outboundBytes = 0;
             _outboundPackets = 0;
+
+            // Open the NEWKEYS barrier last: every earlier step must have
+            // committed before a waiting application write can use the new key.
+            TaskCompletionSource? pendingTransition = Volatile.Read(ref _outboundKeysPending);
+            if (pendingTransition is not null)
+            {
+                _ = Interlocked.CompareExchange(ref _outboundKeysPending, null, pendingTransition);
+                _ = pendingTransition.TrySetResult();
+            }
+        }
+        catch (Exception ex)
+        {
+            AbortOutboundKeyTransition(ex);
+            throw;
         }
         finally
         {
@@ -536,7 +579,71 @@ internal sealed class PacketWriter : IAsyncDisposable
         // caller. The lock is held across the entire frame+encrypt+flush+seqno
         // sequence so two concurrent channel writes (multi-channel cooperative
         // pumper) produce strictly-ordered on-wire output.
-        await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        while (true)
+        {
+            await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            Task? pendingOutboundKeys = null;
+            bool publishedNewKeysTransition = false;
+            try
+            {
+                if (Volatile.Read(ref _outboundKeyTransitionFault) is { } transitionFault)
+                {
+                    throw CreateOutboundKeyTransitionException(transitionFault);
+                }
+
+                // The pending check MUST happen under _writeLock: NEWKEYS
+                // publishes the gate before it releases the lock, so a writer
+                // already queued behind it cannot slip between the NEWKEYS
+                // frame and SetOutboundKeysAsync.
+                if (type != PacketType.NewKeys
+                    && Volatile.Read(ref _outboundKeysPending) is { } pendingTransition)
+                {
+                    pendingOutboundKeys = pendingTransition.Task;
+                }
+                else
+                {
+                    if (type == PacketType.NewKeys)
+                    {
+                        if (Volatile.Read(ref _outboundKeysPending) is not null)
+                        {
+                            throw new SshException(SshErrorCode.Proto,
+                                "NEWKEYS already sent; outbound keys are not installed yet.");
+                        }
+
+                        Volatile.Write(ref _outboundKeysPending,
+                            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+                        publishedNewKeysTransition = true;
+                    }
+
+                    await WriteFrameLockedAsync(type, body, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex) when (publishedNewKeysTransition)
+            {
+                AbortOutboundKeyTransition(ex);
+                throw;
+            }
+            finally
+            {
+                _writeLock.Release();
+            }
+
+            if (pendingOutboundKeys is null)
+            {
+                return;
+            }
+
+            await pendingOutboundKeys.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Frames and writes one packet. The caller must already hold
+    /// <see cref="_writeLock"/>; this method neither takes nor releases it.
+    /// </summary>
+    private async Task WriteFrameLockedAsync<TBody>(int type, TBody body,
+        CancellationToken cancellationToken) where TBody : struct, IPacketBody
+    {
         byte[]? pooledBody = null;
         int pooledBodyLength = 0;
         try
@@ -754,13 +861,41 @@ internal sealed class PacketWriter : IAsyncDisposable
                 CryptographicOperations.ZeroMemory(pooledBody.AsSpan(0, pooledBodyLength));
                 ArrayPool<byte>.Shared.Return(pooledBody);
             }
-
-            _writeLock.Release();
         }
+    }
+
+    /// <summary>
+    /// Wraps a terminal transition failure for a write that arrives after the
+    /// NEWKEYS transition has already faulted. Cancellation and disposal keep
+    /// their public exception types; everything else is normalized to an
+    /// <see cref="SshException"/> so callers that catch only SSH errors still
+    /// observe the failure.
+    /// </summary>
+    private static Exception CreateOutboundKeyTransitionException(Exception cause)
+        => cause is SshException or ObjectDisposedException or OperationCanceledException
+            ? cause
+            : new SshException(SshErrorCode.Proto,
+                "outbound key transition failed; the session cannot send more packets.", cause);
+
+    /// <summary>
+    /// Permanently faults the NEWKEYS outbound-key transition and wakes every
+    /// write waiting on it. Idempotent. Called on framing/install failure and
+    /// on writer disposal so queued writers fail fast instead of hanging or
+    /// falling back to the old cipher.
+    /// </summary>
+    internal void AbortOutboundKeyTransition(Exception cause)
+    {
+        ArgumentNullException.ThrowIfNull(cause);
+
+        Exception? existing = Interlocked.CompareExchange(ref _outboundKeyTransitionFault, cause, null);
+        Exception fault = existing ?? cause;
+        TaskCompletionSource? pending = Interlocked.Exchange(ref _outboundKeysPending, null);
+        _ = pending?.TrySetException(fault);
     }
 
     public ValueTask DisposeAsync()
     {
+        AbortOutboundKeyTransition(new ObjectDisposedException(nameof(PacketWriter)));
         _cipher?.Dispose();
         _mac?.Dispose();
         _compression?.Dispose();

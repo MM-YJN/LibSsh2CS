@@ -856,13 +856,50 @@ internal static class KeyExchange
         // first KEX (session_id := exchangeHash).
         byte[] sessionId = existingSessionId ?? exchangeHash;
 
-        // ── 7. Send NEWKEYS (type 21, bare), then install OUTBOUND keys ──────
-        // The NEWKEYS packet is the last under the old (cleartext) framing;
-        // SetOutboundKeys flips the writer to encrypted + resets seqno.
-        await writer.WriteControlPacketAsync(PacketType.NewKeys, cancellationToken)
-            .ConfigureAwait(false);
-        await InstallOutboundKeysAsync(writer, negotiated, sharedSecret, exchangeHash, sessionId, cancellationToken)
-            .ConfigureAwait(false);
+        // ── 7. Prepare OUTBOUND keys, send NEWKEYS, then install ─────────────
+        // Derive/initialize the new cipher/MAC/compression BEFORE NEWKEYS so a
+        // KDF failure cannot leave the peer expecting new keys while the writer
+        // still holds the old ones. The writer's NEWKEYS barrier blocks every
+        // other packet between the frame and this install, so the strict-KEX
+        // seqno reset to 0 can never be reused with the old key.
+        PreparedOutboundKeys outbound = PrepareOutboundKeys(
+            negotiated, sharedSecret, exchangeHash, sessionId);
+        bool newKeysSent = false;
+        bool installed = false;
+        try
+        {
+            await writer.WriteControlPacketAsync(PacketType.NewKeys, cancellationToken)
+                .ConfigureAwait(false);
+            newKeysSent = true;
+
+            // Once NEWKEYS is on the wire the transition must complete: a
+            // cancellation here would desynchronize the session while the peer
+            // has already switched its inbound keys.
+            await writer.SetOutboundKeysAsync(
+                outbound.Cipher, outbound.Mac, outbound.Compression,
+                negotiated.StrictKex, outbound.CompressionActive,
+                cancellationToken: CancellationToken.None).ConfigureAwait(false);
+            installed = true;
+        }
+        catch (Exception ex)
+        {
+            // WritePacketCoreAsync faults the gate itself if it published one
+            // and the frame write failed; this covers an install failure after
+            // a successfully framed NEWKEYS.
+            if (newKeysSent)
+            {
+                writer.AbortOutboundKeyTransition(ex);
+            }
+
+            throw;
+        }
+        finally
+        {
+            if (!installed)
+            {
+                outbound.Dispose();
+            }
+        }
 
         // ── 8. Receive server NEWKEYS, then install INBOUND keys ─────────────
         // The server's NEWKEYS arrives under the OLD (cleartext) inbound keys;
@@ -911,11 +948,13 @@ internal static class KeyExchange
     }
 
     /// <summary>
-    /// Derives the 6 RFC 4253 keys and installs the OUTBOUND (client→server)
-    /// cipher/MAC/compression on <paramref name="writer"/>. Letters A/C/E.
+    /// Derives the 6 RFC 4253 keys and creates/initializes the OUTBOUND
+    /// (client→server) cipher/MAC/compression. Letters A/C/E. The writer is not
+    /// touched: <see cref="RunExchangeAsync"/> installs the returned material
+    /// only after the NEWKEYS frame has been sent.
     /// </summary>
-    private static async Task InstallOutboundKeysAsync(PacketWriter writer, NegotiatedMethods negotiated,
-        BigInteger k, byte[] h, byte[] sessionId, CancellationToken cancellationToken)
+    private static PreparedOutboundKeys PrepareOutboundKeys(NegotiatedMethods negotiated,
+        BigInteger k, byte[] h, byte[] sessionId)
     {
         ICipher cipher = CreateCipherOrThrow(negotiated.CipherCs);
         ICompression compression = CreateCompressionOrThrow(negotiated.CompCs);
@@ -934,12 +973,30 @@ internal static class KeyExchange
 
         compression.Init(compress: true);
         bool compressionActive = compression.Compresses && compression.UseInAuth;
+        return new PreparedOutboundKeys(cipher, mac, compression, compressionActive);
+    }
 
-        // SetOutboundKeys now acquires the writer lock internally
-        // so it cannot race with a concurrent channel WritePacketAsync during
-        // rekey. Previously this was a sync call; it is awaited now.
-        await writer.SetOutboundKeysAsync(cipher, mac, compression, negotiated.StrictKex, compressionActive,
-            cancellationToken).ConfigureAwait(false);
+    /// <summary>
+    /// The prepared outbound crypto for the post-NEWKEYS era. Ownership passes
+    /// to the writer on a successful install; otherwise the exchange disposes it.
+    /// </summary>
+    private sealed class PreparedOutboundKeys(
+        ICipher cipher, IMac mac, ICompression compression, bool compressionActive) : IDisposable
+    {
+        public ICipher Cipher { get; } = cipher;
+
+        public IMac Mac { get; } = mac;
+
+        public ICompression Compression { get; } = compression;
+
+        public bool CompressionActive { get; } = compressionActive;
+
+        public void Dispose()
+        {
+            Cipher.Dispose();
+            Mac.Dispose();
+            Compression.Dispose();
+        }
     }
 
     /// <summary>
